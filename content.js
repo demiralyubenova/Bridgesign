@@ -299,24 +299,45 @@
     `;
 
     overlay.querySelectorAll('.vt-role-btn').forEach(btn => {
-      btn.onclick = () => {
-        state.role = btn.dataset.role;
+      btn.onclick = async (e) => {
+        const target = e.currentTarget;
+        state.role = target.dataset.role;
         overlay.remove();
-        startSession();
+        await startSession();
       };
     });
     document.body.appendChild(overlay);
   }
 
-  function startSession() {
+  async function startSession() {
     const root = document.createElement('div');
     root.id = 'signflow-root';
     document.body.appendChild(root);
 
+    // If signer, inject PiP window
+    if (state.role === 'signer') {
+      const existingPip = document.getElementById('sf-pip-container');
+      if (existingPip) existingPip.remove();
+
+      const pip = document.createElement('div');
+      pip.id = 'sf-pip-container';
+      pip.className = 'sf-pip-container';
+      pip.style.display = 'block'; // Ensure it starts visible
+      pip.innerHTML = `
+        <div class="sf-pip-header" id="sf-pip-header">ASL PREVIEW</div>
+        <canvas class="sf-pip-canvas" id="sf-pip-canvas"></canvas>
+        <div class="sf-pip-label-wrap">
+          <span class="sf-pip-label" id="sf-pip-label">-</span>
+        </div>
+      `;
+      document.body.appendChild(pip);
+      initDraggable(pip, pip.querySelector('#sf-pip-header'));
+    }
+
     state.toolbar = new VoiceToolbar({ container: root, sessionId: getRoomId() });
     state.toolbar.mount();
 
-    // Init Draggable
+    // Init Draggable Dashboard
     initDraggable(root, document.getElementById('sf-drag-handle'));
 
     // Join room
@@ -324,7 +345,7 @@
 
     // Recognition
     if (state.role === 'speaker') startSpeechRecognition();
-    else startASLRecognition();
+    else await startASLRecognition();
 
     // Load settings
     chrome.storage.local.get(['sfSettings', 'overlayPos'], (res) => {
@@ -354,6 +375,8 @@
     else stopASLRecognition();
     const root = document.getElementById('signflow-root');
     if (root) root.remove();
+    const pip = document.getElementById('sf-pip-container');
+    if (pip) pip.remove();
     showRoleSelector();
   }
 
@@ -387,12 +410,20 @@
   }
   function stopSpeechRecognition() { if (speechRec) { speechRec.onend = null; speechRec.stop(); } }
 
-  function startASLRecognition() {
+  async function startASLRecognition() {
     if (window.ASLRecognition) {
-      window.ASLRecognition.start((text, partial) => {
+      state.toolbar.setListening(true);
+      const result = await window.ASLRecognition.start((text, partial) => {
         state.toolbar.addTranscript({ speaker: 'You', text, partial });
         port.postMessage({ type: 'CAPTION', data: { source: 'sign', text, partial } });
       });
+
+      if (result !== true) {
+        state.toolbar.setListening(false);
+        showNotification(`⚠️ Signer Failed: ${result || 'Unknown error'}`);
+      }
+    } else {
+      showNotification('⚠️ ASL Recognition module not loaded');
     }
   }
   function stopASLRecognition() { if (window.ASLRecognition) window.ASLRecognition.stop(); }

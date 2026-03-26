@@ -68,7 +68,7 @@
           <div class="sf-role-option" data-role="signer">
             <div class="sf-role-icon">🤟</div>
             <div class="sf-role-label">I Sign ASL</div>
-            <div class="sf-role-desc">Your signs will be translated to text for others</div>
+            <div class="sf-role-desc">Your ASL fingerspelling will be translated to text for others</div>
           </div>
           <div class="sf-role-option" data-role="speaker">
             <div class="sf-role-icon">🗣️</div>
@@ -327,7 +327,7 @@
 
   // ==================== ASL RECOGNITION ====================
   function startASLRecognition() {
-    showNotification('Starting ASL recognition... (webcam required)');
+    showNotification('Starting ASL fingerspelling recognition... (webcam required)');
 
     if (!window.ASLRecognition) {
       showNotification('❌ ASL recognition module not loaded');
@@ -338,7 +338,7 @@
       addCaption('sign', text, partial);
     }).then((success) => {
       if (success) {
-        showNotification('✅ ASL recognition active — start fingerspelling!');
+        showNotification('✅ ASL fingerspelling active — hold each letter steady for about a second');
       } else {
         showNotification('❌ Failed to start ASL recognition. Check camera permissions.');
       }

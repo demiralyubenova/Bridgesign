@@ -8,7 +8,7 @@ const ASLRecognition = (() => {
   const CONFIG = {
     CAMERA_WIDTH: 640,
     CAMERA_HEIGHT: 480,
-    CONFIDENCE_THRESHOLD: 0.7,
+    CONFIDENCE_THRESHOLD: 0.65,
     HOLD_FRAMES: 8,           // Frames to hold a letter before confirming
     SPACE_TIMEOUT_MS: 1500,   // Pause duration to insert space
     PREDICTION_INTERVAL_MS: 100, // How often to run prediction
@@ -180,8 +180,8 @@ const ASLRecognition = (() => {
   // ==================== MEDIAPIPE HANDS ====================
   async function initializeMediaPipe() {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'START_OFFSCREEN' }, () => {
-        resolve();
+      chrome.runtime.sendMessage({ type: 'START_OFFSCREEN' }, (response) => {
+        resolve(Boolean(response && response.success));
       });
     });
   }
@@ -388,7 +388,10 @@ const ASLRecognition = (() => {
       }
 
       // Step 2: Load MediaPipe
-      await initializeMediaPipe();
+      const offscreenReady = await initializeMediaPipe();
+      if (!offscreenReady) {
+        throw new Error('Offscreen hand tracker failed to initialize');
+      }
 
       // Step 3: Setup Hands model
       await setupHands();

@@ -44,7 +44,7 @@ initHands().catch(err => {
 
 // Listen for incoming video frames as Data URLs
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === 'PROCESS_FRAME') {
+  if (msg.type === 'OFFSCREEN_PROCESS_FRAME') {
     if (hands && msg.dataUrl) {
       const img = new Image();
       img.onload = () => {

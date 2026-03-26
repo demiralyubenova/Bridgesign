@@ -142,6 +142,34 @@ function broadcastToTabs(msg) {
 // ==================== OFFSCREEN DOCUMENT ====================
 let creatingOffscreen;
 let activeSignerTabId = null;
+let offscreenReady = false;
+let offscreenReadyWaiters = [];
+
+function resolveOffscreenReady() {
+  offscreenReady = true;
+  for (const resolve of offscreenReadyWaiters) {
+    resolve(true);
+  }
+  offscreenReadyWaiters = [];
+}
+
+function waitForOffscreenReady(timeoutMs = 5000) {
+  if (offscreenReady) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    const timeoutId = setTimeout(() => {
+      offscreenReadyWaiters = offscreenReadyWaiters.filter((fn) => fn !== onReady);
+      resolve(false);
+    }, timeoutMs);
+
+    const onReady = () => {
+      clearTimeout(timeoutId);
+      resolve(true);
+    };
+
+    offscreenReadyWaiters.push(onReady);
+  });
+}
 
 async function setupOffscreenDocument() {
   if (await hasOffscreenDocument()) return;
@@ -174,13 +202,21 @@ async function hasOffscreenDocument() {
 // Listen for messages from popup or content scripts
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'START_OFFSCREEN') {
-    setupOffscreenDocument().then(() => sendResponse({ success: true }));
+    setupOffscreenDocument()
+      .then(() => waitForOffscreenReady())
+      .then((ready) => sendResponse({ success: ready }))
+      .catch(() => sendResponse({ success: false }));
     return true; // Keep channel open for async response
   }
   
   if (msg.type === 'PROCESS_FRAME') {
-    activeSignerTabId = sender.tab ? sender.tab.id : null;
-    chrome.runtime.sendMessage(msg).catch(() => {});
+    if (sender.tab && sender.tab.id) {
+      activeSignerTabId = sender.tab.id;
+    }
+    chrome.runtime.sendMessage({
+      type: 'OFFSCREEN_PROCESS_FRAME',
+      dataUrl: msg.dataUrl,
+    }).catch(() => {});
     return false;
   }
   
@@ -188,6 +224,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (activeSignerTabId) {
       chrome.tabs.sendMessage(activeSignerTabId, msg).catch(() => {});
     }
+    return false;
+  }
+
+  if (msg.type === 'OFFSCREEN_READY') {
+    resolveOffscreenReady();
     return false;
   }
 

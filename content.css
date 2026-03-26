@@ -1,0 +1,367 @@
+/* SignFlow — Google Meet Overlay Styles */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ========== Container ========== */
+#signflow-root {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 99999;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  pointer-events: none;
+  width: 90%;
+  max-width: 800px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+#signflow-root * {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ========== Caption Bar ========== */
+.sf-caption-bar {
+  width: 100%;
+  background: rgba(10, 10, 15, 0.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 16px 20px;
+  pointer-events: auto;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: sf-slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sf-caption-bar:hover {
+  background: rgba(10, 10, 15, 0.92);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+@keyframes sf-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ========== Header ========== */
+.sf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.sf-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sf-logo {
+  width: 20px;
+  height: 20px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: white;
+  font-weight: 700;
+}
+
+.sf-brand-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+
+.sf-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sf-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  transition: background 0.3s ease;
+}
+
+.sf-status-dot.connected {
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.5);
+  animation: sf-pulse 2s infinite;
+}
+
+@keyframes sf-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.sf-status-text {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 500;
+}
+
+/* ========== Controls ========== */
+.sf-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sf-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sf-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.sf-btn.active {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: #a5b4fc;
+}
+
+/* ========== Captions ========== */
+.sf-captions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 28px;
+  max-height: 120px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.sf-captions::-webkit-scrollbar {
+  display: none;
+}
+
+.sf-caption-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  animation: sf-fade-in 0.2s ease;
+}
+
+@keyframes sf-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sf-caption-source {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  margin-top: 2px;
+}
+
+.sf-caption-source.speech {
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.sf-caption-source.sign {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c4b5fd;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+.sf-caption-text {
+  font-size: 16px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 400;
+  word-break: break-word;
+}
+
+.sf-caption-text.partial {
+  color: rgba(255, 255, 255, 0.5);
+  font-style: italic;
+}
+
+.sf-caption-text.empty {
+  color: rgba(255, 255, 255, 0.2);
+  font-style: italic;
+  font-size: 13px;
+}
+
+/* ========== Role Selector ========== */
+.sf-role-selector {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100000;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  animation: sf-fade-in 0.3s ease;
+}
+
+.sf-role-card {
+  background: rgba(15, 15, 25, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  padding: 40px;
+  max-width: 480px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+
+.sf-role-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: white;
+  margin-bottom: 8px;
+}
+
+.sf-role-subtitle {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 32px;
+}
+
+.sf-role-options {
+  display: flex;
+  gap: 16px;
+}
+
+.sf-role-option {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 2px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 24px 16px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sf-role-option:hover {
+  border-color: rgba(99, 102, 241, 0.5);
+  background: rgba(99, 102, 241, 0.08);
+  transform: translateY(-2px);
+}
+
+.sf-role-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+
+.sf-role-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: white;
+  margin-bottom: 4px;
+}
+
+.sf-role-desc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  line-height: 1.4;
+}
+
+/* ========== Minimize State ========== */
+.sf-caption-bar.minimized {
+  padding: 8px 16px;
+}
+
+.sf-caption-bar.minimized .sf-captions {
+  display: none;
+}
+
+/* ========== Responsive ========== */
+@media (max-width: 600px) {
+  #signflow-root {
+    width: 95%;
+    bottom: 70px;
+  }
+
+  .sf-caption-text {
+    font-size: 14px;
+  }
+
+  .sf-role-options {
+    flex-direction: column;
+  }
+}
+
+/* ========== PIP Container ========== */
+.sf-pip-container {
+  position: absolute;
+  top: -150px;
+  right: 20px;
+  width: 160px;
+  height: 120px;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  animation: sf-fade-in 0.3s ease;
+}
+
+.sf-pip-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.sf-pip-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 28px;
+  font-weight: 700;
+  text-align: center;
+  padding: 2px 0;
+  letter-spacing: 2px;
+}

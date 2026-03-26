@@ -1,0 +1,12 @@
+[build]
+builder = "DOCKER"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+
+[env]
+PORT = "3001"
+MAX_ROOM_SIZE = "2"

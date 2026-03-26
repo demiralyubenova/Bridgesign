@@ -208,6 +208,24 @@
   border-color: rgba(255, 255, 255, 0.08);
 }
 
+#sf-btn-transcript {
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#sf-btn-transcript:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
 #sf-btn-minimize:hover {
   background: rgba(255, 255, 255, 0.1);
 }

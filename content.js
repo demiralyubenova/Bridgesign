@@ -17,6 +17,7 @@
     captions: [],       // { source: 'speech'|'sign', text: string, partial: boolean, timestamp: number }
     maxCaptions: 8,
     minimized: false,
+    transcript: [],     // All finalized captions for download
   };
 
   // ==================== BACKGROUND PORT ====================
@@ -138,6 +139,7 @@
           </div>
           <div class="sf-header-right">
             <div class="sf-controls">
+              <button class="sf-btn" id="sf-btn-transcript" title="Download Transcript">📥</button>
               <button class="sf-btn" id="sf-btn-role" title="Switch role">
                 ${state.role === 'signer' ? '🤟' : '🗣️'} ${state.role === 'signer' ? 'Signer' : 'Speaker'}
               </button>
@@ -170,6 +172,9 @@
       bar.classList.toggle('minimized', state.minimized);
       document.getElementById('sf-btn-minimize').textContent = state.minimized ? '□' : '─';
     });
+
+    // Download transcript button
+    document.getElementById('sf-btn-transcript').addEventListener('click', downloadTranscript);
 
     // Role switch button
     document.getElementById('sf-btn-role').addEventListener('click', () => {
@@ -312,6 +317,40 @@
         data: { source, text, partial },
       });
     }
+
+    // Store in internal transcript array (final results only)
+    if (!partial) {
+      const now = new Date();
+      const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+      state.transcript.push({
+        timestamp: timeStr,
+        source: source === 'speech' ? 'Speech' : 'ASL',
+        text: text.trim()
+      });
+    }
+  }
+
+  function downloadTranscript() {
+    if (state.transcript.length === 0) {
+      showNotification('ℹ️ No captions to download yet');
+      return;
+    }
+
+    const content = state.transcript
+      .map(line => `[${line.timestamp}] ${line.source}: ${line.text}`)
+      .join('\n');
+
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `SignFlow_Transcript_${getRoomId()}_${new Date().getTime()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    showNotification('✅ Transcript downloaded');
   }
 
   function escapeHtml(str) {

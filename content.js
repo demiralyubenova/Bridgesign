@@ -159,6 +159,24 @@
             </div>
           </div>
         </div>
+
+        <div class="vt-section">
+          <div class="sf-sign-section-header">
+            <label class="vt-section-label">ASL Playback</label>
+            <button class="sf-sign-replay" id="sf-replay-sign" type="button">Replay</button>
+          </div>
+          <div class="sf-sign-panel vt-panel">
+            <div class="sf-sign-stage">
+              <video class="sf-sign-video" id="sf-sign-video" playsinline muted></video>
+              <div class="sf-sign-fallback-card" id="sf-sign-fallback-card" style="display:none;"></div>
+            </div>
+            <div class="sf-sign-meta">
+              <div class="sf-sign-status" id="sf-sign-status">Waiting for ASL plan</div>
+              <div class="sf-sign-current" id="sf-sign-current">-</div>
+            </div>
+            <div class="sf-sign-unit-list" id="sf-sign-unit-list"></div>
+          </div>
+        </div>
       `;
 
       this._bindEvents();
@@ -213,6 +231,12 @@
       this.container.querySelector('#sf-opacity-slider').addEventListener('input', (e) => {
         updateSettings({ opacity: e.target.value });
       });
+
+      this.container.querySelector('#sf-replay-sign').addEventListener('click', () => {
+        if (window.SignPlayer) {
+          window.SignPlayer.replayLast();
+        }
+      });
     }
 
     _startListeningAnimation() {
@@ -263,6 +287,11 @@
           text: msg.data.text,
           partial: msg.data.partial 
         });
+        break;
+      case 'REMOTE_SIGN_PLAN':
+        if (window.SignPlayer) {
+          window.SignPlayer.enqueueManifest(msg.data.signPlan);
+        }
         break;
       case 'PEER_JOINED': showNotification(`Peer joined as ${msg.data.role}`); break;
       case 'PEER_LEFT': showNotification('Peer disconnected'); break;
@@ -316,6 +345,17 @@
     state.toolbar = new VoiceToolbar({ container: root, sessionId: getRoomId() });
     state.toolbar.mount();
 
+    if (window.SignPlayer) {
+      window.SignPlayer.mount({
+        status: document.getElementById('sf-sign-status'),
+        label: document.getElementById('sf-sign-current'),
+        unitList: document.getElementById('sf-sign-unit-list'),
+        video: document.getElementById('sf-sign-video'),
+        fallbackCard: document.getElementById('sf-sign-fallback-card'),
+        replayButton: document.getElementById('sf-replay-sign'),
+      });
+    }
+
     // Init Draggable
     initDraggable(root, document.getElementById('sf-drag-handle'));
 
@@ -352,6 +392,9 @@
   function switchRole() {
     if (state.role === 'speaker') stopSpeechRecognition();
     else stopASLRecognition();
+    if (window.SignPlayer) {
+      window.SignPlayer.reset();
+    }
     const root = document.getElementById('signflow-root');
     if (root) root.remove();
     showRoleSelector();

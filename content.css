@@ -205,6 +205,127 @@
   font-style: italic;
 }
 
+.sf-sign-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  padding: 0 4px;
+}
+
+.sf-sign-replay {
+  pointer-events: auto;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  color: #d6d6d6;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sf-sign-replay:hover:enabled {
+  background: rgba(255,255,255,0.1);
+}
+
+.sf-sign-replay:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sf-sign-panel {
+  border-radius: 16px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sf-sign-stage {
+  position: relative;
+  min-height: 170px;
+  border-radius: 14px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.18), transparent 38%),
+    linear-gradient(145deg, rgba(12, 18, 30, 0.96), rgba(24, 24, 28, 0.96));
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.sf-sign-video,
+.sf-sign-fallback-card {
+  width: 100%;
+  min-height: 170px;
+}
+
+.sf-sign-video {
+  display: none;
+  object-fit: cover;
+  background: transparent;
+}
+
+.sf-sign-fallback-card {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  text-align: center;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #f8fafc;
+  text-transform: uppercase;
+}
+
+.sf-sign-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sf-sign-status {
+  font-size: 12px;
+  color: #8f9bb3;
+}
+
+.sf-sign-current {
+  font-size: 12px;
+  color: #f8fafc;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.sf-sign-unit-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sf-sign-chip,
+.sf-sign-placeholder {
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.sf-sign-chip {
+  background: rgba(34, 211, 238, 0.14);
+  border: 1px solid rgba(34, 211, 238, 0.18);
+  color: #c6f6ff;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.sf-sign-placeholder {
+  background: rgba(255,255,255,0.04);
+  border: 1px dashed rgba(255,255,255,0.08);
+  color: #8f9bb3;
+}
+
 /* ── Waveform ── */
 .vt-wave-wrap {
   display: flex;
@@ -332,6 +453,23 @@
     box-shadow: 0 10px 30px rgba(0,0,0,0.3);
   }
   .vt-role-label { color: #eee; }
+}
+
+@media (max-width: 680px) {
+  #signflow-root {
+    width: calc(100vw - 24px);
+    padding: 12px;
+    bottom: 72px;
+  }
+
+  .sf-sign-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .sf-sign-fallback-card {
+    font-size: 22px;
+  }
 }
 
 /* ── Toasts (Move down to avoid conflict) ── */

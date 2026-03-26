@@ -1,8 +1,8 @@
 /* ==========================================================================
-   SignFlow: Modern Dashboard (VoiceToolbar Integration)
+   BridgeSign: Modern Dashboard (VoiceToolbar Integration)
    ========================================================================== */
 
-#signflow-root {
+#bridgesign-root {
   position: fixed;
   z-index: 2147483647;
   pointer-events: none;
@@ -21,7 +21,7 @@
   --sf-caption-color: #e5e5e5;
 }
 
-#signflow-root * {
+#bridgesign-root * {
   box-sizing: border-box;
 }
 

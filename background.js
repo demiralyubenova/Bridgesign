@@ -1,15 +1,15 @@
-// SignFlow Background Service Worker
+// BridgeSign Background Service Worker
 // Manages extension state and WebSocket connection to relay server
 
 let RELAY_SERVER_URL = 'ws://localhost:3001';
-chrome.storage.sync.get(['signflowServerUrl'], (res) => {
-  if (res.signflowServerUrl) RELAY_SERVER_URL = res.signflowServerUrl;
+chrome.storage.sync.get(['bridgesignServerUrl'], (res) => {
+  if (res.bridgesignServerUrl) RELAY_SERVER_URL = res.bridgesignServerUrl;
 });
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'sync' && changes.signflowServerUrl) {
-    RELAY_SERVER_URL = changes.signflowServerUrl.newValue;
-    console.log('[SignFlow] Server URL updated:', RELAY_SERVER_URL);
+  if (namespace === 'sync' && changes.bridgesignServerUrl) {
+    RELAY_SERVER_URL = changes.bridgesignServerUrl.newValue;
+    console.log('[BridgeSign] Server URL updated:', RELAY_SERVER_URL);
     if (ws && ws.readyState !== WebSocket.CLOSED) {
       ws.close(); // Triggers auto-reconnect to the new URL
     }
@@ -27,7 +27,7 @@ let reconnectAttempts = 0;
 
 // Listen for connections from content scripts
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== 'signflow') return;
+  if (port.name !== 'bridgesign') return;
 
   const tabId = port.sender.tab.id;
   connectedPorts.set(tabId, port);
@@ -121,12 +121,12 @@ function joinRoom(roomId, role) {
         latencyMs = Date.now() - msg.timestamp;
       }
     } catch (e) {
-      console.error('[SignFlow] Failed to parse WS message:', e);
+      console.error('[BridgeSign] Failed to parse WS message:', e);
     }
   };
 
   ws.onerror = (error) => {
-    console.error('[SignFlow] WebSocket error:', error);
+    console.error('[BridgeSign] WebSocket error:', error);
     broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: false, roomId: currentRoomId } });
   };
 
@@ -136,12 +136,12 @@ function joinRoom(roomId, role) {
     broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: false, roomId: currentRoomId } });
     
     if (!navigator.onLine) {
-      console.log('[SignFlow] Browser offline. Pausing reconnects.');
+      console.log('[BridgeSign] Browser offline. Pausing reconnects.');
       return;
     }
 
     if (reconnectAttempts >= 5) {
-      console.warn('[SignFlow] Max reconnect attempts reached.');
+      console.warn('[BridgeSign] Max reconnect attempts reached.');
       broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: false, roomId: currentRoomId, error: 'CONNECTION_FAILED' } });
       return;
     }

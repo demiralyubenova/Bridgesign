@@ -1,11 +1,11 @@
-// SignFlow Virtual Camera
+// BridgeSign Virtual Camera
 // Patches getUserMedia to route webcam through a canvas for subtitle overlay.
 // Runs at document_start in MAIN world.
 
 (function () {
   'use strict';
 
-  if (window.__SignFlowVCam) return;
+  if (window.__BridgeSignVCam) return;
 
   const CANVAS_FPS = 30;
   let originalStream = null;
@@ -30,7 +30,7 @@
       const virtualStream = await createVirtualStream(stream);
       return virtualStream;
     } catch (e) {
-      console.warn('[SignFlow VCam] Fallback to raw stream:', e);
+      console.warn('[BridgeSign VCam] Fallback to raw stream:', e);
       return stream;
     }
   };
@@ -188,7 +188,7 @@
     ctx.closePath();
   }
 
-  window.__SignFlowVCam = {
+  window.__BridgeSignVCam = {
     activate() { active = true; },
     setCaptionText(text) {
       currentCaption = text || '';
@@ -202,18 +202,18 @@
   };
 
   // === CROSS-WORLD BRIDGE ===
-  // content.js runs in ISOLATED world and can't access window.__SignFlowVCam.
+  // content.js runs in ISOLATED world and can't access window.__BridgeSignVCam.
   // Both worlds share the same `document`, so we use CustomEvents.
-  document.addEventListener('signflow-vcam-activate', () => {
+  document.addEventListener('bridgesign-vcam-activate', () => {
     active = true;
   });
 
-  document.addEventListener('signflow-vcam-caption', (e) => {
+  document.addEventListener('bridgesign-vcam-caption', (e) => {
     currentCaption = (e.detail && e.detail.text) || '';
     captionExpiry = Date.now() + 8000;
   });
 
-  document.addEventListener('signflow-vcam-stop', () => {
+  document.addEventListener('bridgesign-vcam-stop', () => {
     active = false;
     currentCaption = '';
   });

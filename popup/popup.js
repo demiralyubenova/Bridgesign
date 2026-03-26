@@ -1,4 +1,4 @@
-// SignFlow Popup Script
+// BridgeSign Popup Script
 // Shows extension status when clicking the browser action icon
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -6,9 +6,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveBtn = document.getElementById('btn-save-server');
 
   // Load saved server URL
-  chrome.storage.sync.get(['signflowServerUrl'], (res) => {
-    if (res.signflowServerUrl) {
-      serverInput.value = res.signflowServerUrl;
+  chrome.storage.sync.get(['bridgesignServerUrl'], (res) => {
+    if (res.bridgesignServerUrl) {
+      serverInput.value = res.bridgesignServerUrl;
     } else {
       serverInput.value = 'ws://localhost:3001';
     }
@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   saveBtn.addEventListener('click', () => {
     const newUrl = serverInput.value.trim();
     if (newUrl) {
-      chrome.storage.sync.set({ signflowServerUrl: newUrl }, () => {
+      chrome.storage.sync.set({ bridgesignServerUrl: newUrl }, () => {
         saveBtn.textContent = 'Saved!';
         saveBtn.classList.add('success');
         setTimeout(() => {
@@ -81,9 +81,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Get role from storage
-    chrome.storage.local.get('signflowRole', (data) => {
-      infoRole.textContent = data.signflowRole
-        ? (data.signflowRole === 'signer' ? '🤟 Signer' : '🗣️ Speaker')
+    chrome.storage.local.get('bridgesignRole', (data) => {
+      infoRole.textContent = data.bridgesignRole
+        ? (data.bridgesignRole === 'signer' ? '🤟 Signer' : '🗣️ Speaker')
         : '—';
     });
   });

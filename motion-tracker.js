@@ -1,4 +1,4 @@
-// SignFlow Motion Tracker
+// BridgeSign Motion Tracker
 // Tracks fingertip trajectories to detect dynamic ASL letters like J and Z
 
 const MotionTracker = (() => {

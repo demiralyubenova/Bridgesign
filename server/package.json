@@ -1,7 +1,7 @@
 {
-  "name": "signflow-relay",
+  "name": "bridgesign-relay",
   "version": "1.0.0",
-  "description": "SignFlow WebSocket relay server",
+  "description": "BridgeSign WebSocket relay server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

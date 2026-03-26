@@ -1,11 +1,11 @@
-// SignFlow Meet Caption Scraper
+// BridgeSign Meet Caption Scraper
 // Uses MutationObserver to read Google Meet's built-in Closed Captions
 // and exposes them to content.js so the signer can see what others are saying.
 
 (function () {
   'use strict';
 
-  if (window.__SignFlowCaptionScraper) return;
+  if (window.__BridgeSignCaptionScraper) return;
 
   let observer = null;
   let callback = null;
@@ -129,7 +129,7 @@
   }
 
   // ==================== PUBLIC API ====================
-  window.__SignFlowCaptionScraper = {
+  window.__BridgeSignCaptionScraper = {
     /**
      * Start scraping Meet's native captions.
      * @param {Function} cb - Called with { speaker: string, text: string } on each new caption

@@ -1,10 +1,10 @@
-// SignFlow Content Script
+// BridgeSign Content Script
 // Definitive Modern Dashboard Integration (VoiceToolbar)
 
 (function () {
   'use strict';
 
-  if (document.getElementById('signflow-root')) return;
+  if (document.getElementById('bridgesign-root')) return;
 
   // ==================== STATE ====================
   const state = {
@@ -248,7 +248,7 @@
   }
 
   // ==================== RECOGNITION CALLS ====================
-  const port = chrome.runtime.connect({ name: 'signflow' });
+  const port = chrome.runtime.connect({ name: 'bridgesign' });
 
   port.onMessage.addListener((msg) => {
     switch (msg.type) {
@@ -275,15 +275,15 @@
   }
 
   function showRoleSelector() {
-    const existing = document.getElementById('signflow-role-selector');
+    const existing = document.getElementById('bridgesign-role-selector');
     if (existing) existing.remove();
 
     const overlay = document.createElement('div');
-    overlay.id = 'signflow-role-selector';
+    overlay.id = 'bridgesign-role-selector';
     overlay.className = 'vt-role-selector-overlay';
     overlay.innerHTML = `
       <div class="vt-role-card">
-        <h2 class="vt-role-title">SignFlow</h2>
+        <h2 class="vt-role-title">BridgeSign</h2>
         <p class="vt-role-subtitle">Choose your communication mode:</p>
         <div class="vt-role-options">
           <button class="vt-role-btn" data-role="signer">
@@ -311,7 +311,7 @@
 
   async function startSession() {
     const root = document.createElement('div');
-    root.id = 'signflow-root';
+    root.id = 'bridgesign-root';
     document.body.appendChild(root);
 
     // If signer, inject PiP window
@@ -348,12 +348,12 @@
       startSpeechRecognition();
     } else {
       // Activate virtual camera subtitle overlay (cross-world event)
-      document.dispatchEvent(new CustomEvent('signflow-vcam-activate'));
+      document.dispatchEvent(new CustomEvent('bridgesign-vcam-activate'));
       await startASLRecognition();
 
       // Start scraping Meet's built-in CC so the signer can read speech
-      if (window.__SignFlowCaptionScraper) {
-        window.__SignFlowCaptionScraper.start((cap) => {
+      if (window.__BridgeSignCaptionScraper) {
+        window.__BridgeSignCaptionScraper.start((cap) => {
           state.toolbar.addTranscript({ speaker: cap.speaker, text: cap.text, partial: false });
         });
       }
@@ -373,7 +373,7 @@
 
   function updateSettings(s) {
     state.settings = { ...state.settings, ...s };
-    const root = document.getElementById('signflow-root');
+    const root = document.getElementById('bridgesign-root');
     if (root) {
       root.style.setProperty('--sf-font-size', state.settings.fontSize);
       root.style.setProperty('--sf-bg-opacity', state.settings.opacity);
@@ -386,10 +386,10 @@
     if (state.role === 'speaker') stopSpeechRecognition();
     else {
       stopASLRecognition();
-      document.dispatchEvent(new CustomEvent('signflow-vcam-stop'));
-      if (window.__SignFlowCaptionScraper) window.__SignFlowCaptionScraper.stop();
+      document.dispatchEvent(new CustomEvent('bridgesign-vcam-stop'));
+      if (window.__BridgeSignCaptionScraper) window.__BridgeSignCaptionScraper.stop();
     }
-    const root = document.getElementById('signflow-root');
+    const root = document.getElementById('bridgesign-root');
     if (root) root.remove();
     const pip = document.getElementById('sf-pip-container');
     if (pip) pip.remove();
@@ -436,7 +436,7 @@
         port.postMessage({ type: 'CAPTION', data: { source: 'sign', text, partial } });
 
         // Push caption text onto the virtual camera overlay (cross-world event)
-        document.dispatchEvent(new CustomEvent('signflow-vcam-caption', { detail: { text } }));
+        document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text } }));
       });
 
       if (result !== true) {
@@ -479,7 +479,7 @@
     const blob = new Blob([state.fullTranscript.map(l => `[${l.timestamp}] ${l.speaker}: ${l.text}`).join('\n')], { type: 'text/plain' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `SignFlow_Transcript_${getRoomId()}.txt`;
+    a.download = `BridgeSign_Transcript_${getRoomId()}.txt`;
     a.click();
     showNotification('✅ Downloaded');
   }
@@ -511,10 +511,10 @@
   function check() {
     const isMeet = /\/[a-z]{3}-[a-z]{4}-[a-z]{3}/.test(window.location.pathname);
     if (!isMeet) {
-      if (document.getElementById('signflow-root')) document.getElementById('signflow-root').remove();
+      if (document.getElementById('bridgesign-root')) document.getElementById('bridgesign-root').remove();
       return;
     }
-    if (document.getElementById('signflow-root') || document.getElementById('signflow-role-selector')) return;
+    if (document.getElementById('bridgesign-root') || document.getElementById('bridgesign-role-selector')) return;
     if (document.querySelector('video')) injectUI();
   }
 

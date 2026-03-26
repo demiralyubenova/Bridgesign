@@ -182,16 +182,24 @@
   }
 
   function showNotification(message) {
-    const captionsEl = document.getElementById('sf-captions');
-    if (!captionsEl) return;
+    let container = document.getElementById('sf-toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'sf-toast-container';
+      container.className = 'sf-toast-container';
+      document.body.appendChild(container);
+    }
 
-    const line = document.createElement('div');
-    line.className = 'sf-caption-line';
-    line.innerHTML = `<span class="sf-caption-text empty">ℹ️ ${message}</span>`;
-    captionsEl.appendChild(line);
-    captionsEl.scrollTop = captionsEl.scrollHeight;
+    const toast = document.createElement('div');
+    toast.className = 'sf-toast';
+    toast.innerHTML = `<span class="sf-toast-text">${escapeHtml(message)}</span>`;
+    
+    container.appendChild(toast);
 
-    setTimeout(() => line.remove(), 5000);
+    setTimeout(() => {
+      toast.classList.add('sf-toast-fadeout');
+      setTimeout(() => toast.remove(), 300);
+    }, 4700);
   }
 
   // ==================== CAPTIONS ====================
@@ -336,11 +344,12 @@
 
     window.ASLRecognition.start((text, partial) => {
       addCaption('sign', text, partial);
-    }).then((success) => {
-      if (success) {
+    }).then((result) => {
+      if (result === true) {
         showNotification('✅ ASL fingerspelling active — hold each letter steady for about a second');
       } else {
-        showNotification('❌ Failed to start ASL recognition. Check camera permissions.');
+        const errorMsg = typeof result === 'string' ? result : 'Check camera permissions.';
+        showNotification(`❌ Failed to start ASL recognition. ${errorMsg}`);
       }
     });
   }

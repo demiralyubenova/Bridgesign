@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # SignFlow 🤟
 
 **Real-time sign language ↔ speech translation for video calls**
@@ -98,3 +99,6 @@ ht12/
 ## License
 
 MIT
+=======
+# Bridgesign
+>>>>>>> 32eef10daa7ef3d7ce990c5257ed57f2e329663b

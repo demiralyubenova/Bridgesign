@@ -12,6 +12,7 @@ const RATE_LIMIT_SEC = 60;
 
 // Room management: roomId -> Set of { ws, role, id }
 const rooms = new Map();
+const clientRooms = new Map(); // ws -> roomId for O(1) lookup
 let clientId = 0;
 const rateLimits = new Map(); // id -> { count, start }
 
@@ -32,6 +33,9 @@ server.listen(PORT, HOST, () => {
 });
 
 wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
   const id = ++clientId;
   let currentRoom = null;
   let currentRole = null;
@@ -59,13 +63,28 @@ wss.on('connection', (ws) => {
       msg = JSON.parse(raw);
     } catch (e) {
       console.error(`[!] Client ${id}: Invalid JSON`);
-      return;
+      return ws.send(JSON.stringify({ type: 'ERROR', message: 'Invalid JSON' }));
+    }
+
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) {
+      console.error(`[!] Client ${id}: Payload must be a JSON object`);
+      return ws.send(JSON.stringify({ type: 'ERROR', message: 'Payload must be a JSON object' }));
+    }
+
+    if (typeof msg.type !== 'string') {
+      console.error(`[!] Client ${id}: Missing or invalid message type`);
+      return ws.send(JSON.stringify({ type: 'ERROR', message: 'Missing or invalid message type' }));
     }
 
     switch (msg.type) {
       case 'JOIN': {
         const { roomId, role } = msg;
-        if (!roomId) return;
+        if (typeof roomId !== 'string' || roomId.trim() === '') {
+          return ws.send(JSON.stringify({ type: 'ERROR', message: 'Invalid or missing roomId' }));
+        }
+        if (role && typeof role !== 'string') {
+          return ws.send(JSON.stringify({ type: 'ERROR', message: 'Role must be a string' }));
+        }
 
         // Check room size limit
         const existingRoom = rooms.get(roomId);
@@ -81,6 +100,7 @@ wss.on('connection', (ws) => {
         // Join new room
         currentRoom = roomId;
         currentRole = role || 'unknown';
+        clientRooms.set(ws, roomId);
 
         if (!rooms.has(roomId)) {
           rooms.set(roomId, new Set());
@@ -117,6 +137,13 @@ wss.on('connection', (ws) => {
 
       case 'CAPTION': {
         if (!currentRoom) return;
+
+        if (!msg.data || typeof msg.data !== 'object' || Array.isArray(msg.data)) {
+           return ws.send(JSON.stringify({ type: 'ERROR', message: 'CAPTION requires a data object' }));
+        }
+        if (typeof msg.data.text !== 'string') {
+           return ws.send(JSON.stringify({ type: 'ERROR', message: 'CAPTION data.text must be a string' }));
+        }
 
         // Relay caption to all others in room
         broadcastToRoom(currentRoom, ws, {
@@ -161,7 +188,11 @@ wss.on('connection', (ws) => {
 });
 
 function leaveRoom(ws, id) {
-  for (const [roomId, members] of rooms.entries()) {
+  const roomId = clientRooms.get(ws);
+  if (!roomId) return;
+
+  const members = rooms.get(roomId);
+  if (members) {
     for (const member of members) {
       if (member.ws === ws) {
         members.delete(member);
@@ -178,10 +209,11 @@ function leaveRoom(ws, id) {
           rooms.delete(roomId);
           console.log(`[x] Room "${roomId}" deleted (empty)`);
         }
-        return;
+        break;
       }
     }
   }
+  clientRooms.delete(ws);
 }
 
 function broadcastToRoom(roomId, senderWs, msg) {
@@ -204,3 +236,17 @@ setInterval(() => {
     console.log(`[i] Active: ${rooms.size} rooms, ${total} clients`);
   }
 }, 30000);
+
+// Heartbeat (Ping/Pong) to prevent idle timeouts
+const interval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) {
+      console.log(`[!] Client terminated due to inactivity heartbeat`);
+      return ws.terminate();
+    }
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 30000);
+
+wss.on('close', () => clearInterval(interval));

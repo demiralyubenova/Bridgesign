@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # SignFlow 🤟
 
 **Real-time sign language ↔ speech translation for video calls**

@@ -27,6 +27,7 @@ const ASLRecognition = (() => {
   // ==================== STATE ====================
   let isActive = false;
   let videoElement = null;
+  let ownsVideoElement = false;
   let canvasElement = null;
   let canvasCtx = null;
   let animFrameId = null;
@@ -161,6 +162,7 @@ const ASLRecognition = (() => {
       videoElement.muted = true;
       videoElement.style.display = 'none';
       document.body.appendChild(videoElement);
+      ownsVideoElement = true;
 
       canvasElement = document.createElement('canvas');
       canvasElement.width = CONFIG.CAMERA_WIDTH;
@@ -379,12 +381,19 @@ const ASLRecognition = (() => {
     confirmedWord = '';
     fullText = '';
     lastLetterTime = Date.now();
+    ownsVideoElement = false;
 
     try {
       // Step 1: Initialize camera
       const cameraOk = await initializeCamera();
       if (!cameraOk) {
-        throw new Error('Camera access denied');
+        console.warn('[SignFlow] Dedicated camera failed, attempting to hijack Meet video element');
+        const meetVideo = document.querySelector('video');
+        if (meetVideo) {
+          videoElement = meetVideo;
+        } else {
+          throw new Error('Camera locked by Windows and no active Meet video found');
+        }
       }
 
       // Step 2: Load MediaPipe
@@ -403,7 +412,7 @@ const ASLRecognition = (() => {
     } catch (err) {
       console.error('[SignFlow ASL] Failed to start:', err);
       isActive = false;
-      return false;
+      return err.message;
     }
   }
 
@@ -415,9 +424,11 @@ const ASLRecognition = (() => {
       animFrameId = null;
     }
 
-    if (videoElement && videoElement.srcObject) {
-      videoElement.srcObject.getTracks().forEach((t) => t.stop());
-      videoElement.remove();
+    if (videoElement) {
+      if (ownsVideoElement && videoElement.srcObject) {
+        videoElement.srcObject.getTracks().forEach((t) => t.stop());
+        videoElement.remove();
+      }
       videoElement = null;
     }
 

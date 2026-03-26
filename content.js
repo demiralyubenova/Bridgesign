@@ -263,9 +263,9 @@
   // ==================== SPEECH RECOGNITION ====================
   let speechRecognition = null;
 
-  function startSpeechRecognition() {
+  function startSpeechRecognition(isAutoRestart = false) {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      showNotification('Speech recognition not supported in this browser');
+      if (!isAutoRestart) showNotification('❌ Speech recognition not supported in this browser');
       return;
     }
 
@@ -298,12 +298,12 @@
     speechRecognition.onerror = (event) => {
       console.error('[SignFlow] Speech recognition error:', event.error);
       if (event.error === 'not-allowed') {
-        showNotification('Microphone access denied. Please enable it.');
+        if (!isAutoRestart) showNotification('❌ Microphone access denied. Please enable it.');
       }
       // Auto-restart on non-fatal errors
       if (event.error !== 'not-allowed' && event.error !== 'service-not-allowed') {
         setTimeout(() => {
-          if (state.role === 'speaker') startSpeechRecognition();
+          if (state.role === 'speaker') startSpeechRecognition(true);
         }, 1000);
       }
     };
@@ -311,14 +311,16 @@
     speechRecognition.onend = () => {
       // Auto-restart if still in speaker role
       if (state.role === 'speaker') {
-        setTimeout(() => startSpeechRecognition(), 500);
+        setTimeout(() => startSpeechRecognition(true), 500);
       }
     };
 
     try {
       speechRecognition.start();
       state.isListening = true;
-      showNotification('Speech recognition started');
+      if (!isAutoRestart) {
+        showNotification('✅ Speech recognition active');
+      }
     } catch (e) {
       console.error('[SignFlow] Failed to start speech recognition:', e);
     }

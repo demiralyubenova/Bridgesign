@@ -14,6 +14,11 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(plan["mode"], "fingerspell")
         self.assertEqual([unit["id"] for unit in plan["units"]], ["FS-M", "FS-A", "FS-Y", "FS-A"])
 
+    def test_single_word_phrase_prefers_phrase_sign(self):
+        plan = build_sign_plan("Hello", "http://localhost:8001")
+        self.assertEqual(plan["mode"], "clips")
+        self.assertEqual([unit["id"] for unit in plan["units"]], ["HELLO"])
+
     def test_urgent_phrase_is_prioritized(self):
         plan = build_sign_plan("Stop", "http://localhost:8001")
         self.assertEqual(plan["priority"], "urgent")

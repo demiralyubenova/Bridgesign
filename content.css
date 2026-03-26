@@ -272,10 +272,26 @@
   justify-content: center;
   padding: 20px;
   text-align: center;
-  font-size: 28px;
+  color: #f8fafc;
+}
+
+.sf-sign-fallback-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.sf-sign-fallback-emoji {
+  font-size: 72px;
+  line-height: 1;
+  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.25));
+}
+
+.sf-sign-fallback-text {
+  font-size: 26px;
   font-weight: 800;
   letter-spacing: 0.04em;
-  color: #f8fafc;
   text-transform: uppercase;
 }
 
@@ -316,8 +332,16 @@
   background: rgba(34, 211, 238, 0.14);
   border: 1px solid rgba(34, 211, 238, 0.18);
   color: #c6f6ff;
-  text-transform: uppercase;
   font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-transform: uppercase;
+}
+
+.sf-sign-chip-emoji {
+  font-size: 16px;
+  line-height: 1;
 }
 
 .sf-sign-placeholder {
@@ -468,7 +492,15 @@
   }
 
   .sf-sign-fallback-card {
-    font-size: 22px;
+    padding: 16px;
+  }
+
+  .sf-sign-fallback-emoji {
+    font-size: 56px;
+  }
+
+  .sf-sign-fallback-text {
+    font-size: 20px;
   }
 }
 

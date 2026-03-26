@@ -160,7 +160,7 @@
           </div>
         </div>
 
-        <div class="vt-section">
+        <div class="vt-section" id="sf-sign-section">
           <div class="sf-sign-section-header">
             <label class="vt-section-label">ASL Playback</label>
             <button class="sf-sign-replay" id="sf-replay-sign" type="button">Replay</button>
@@ -373,6 +373,7 @@
 
     if (window.SignPlayer) {
       window.SignPlayer.mount({
+        section: document.getElementById('sf-sign-section'),
         status: document.getElementById('sf-sign-status'),
         label: document.getElementById('sf-sign-current'),
         unitList: document.getElementById('sf-sign-unit-list'),

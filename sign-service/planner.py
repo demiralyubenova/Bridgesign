@@ -356,7 +356,7 @@ def compose_tokens(tokens: list[str], base_url: str) -> list[Unit]:
     while cursor < len(tokens):
         matched = False
         remaining = len(tokens) - cursor
-        for window in range(min(MAX_NGRAM, remaining), 1, -1):
+        for window in range(min(MAX_NGRAM, remaining), 0, -1):
             candidate = " ".join(tokens[cursor:cursor + window])
             exact_units = exact_phrase_units(candidate, base_url)
             if exact_units:
@@ -441,8 +441,18 @@ def _slt_tokens_for_text(text: str) -> list[str]:
 
 
 def slt_plan(text: str, base_url: str) -> tuple[list[Unit], dict[str, object]]:
-    tokens = _slt_tokens_for_text(text)
-    units = compose_tokens(tokens, base_url)
+    segments = split_clauses(text)
+    units: list[Unit] = []
+
+    for segment in segments:
+        exact_units = exact_phrase_units(segment, base_url)
+        if exact_units:
+            units.extend(exact_units)
+            continue
+
+        tokens = _slt_tokens_for_text(segment)
+        units.extend(compose_tokens(tokens, base_url))
+
     metadata = {
         "provider": "sign-language-translator",
         "provider_available": True,

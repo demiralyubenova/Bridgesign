@@ -4,6 +4,107 @@
 const SignPlayer = (() => {
   'use strict';
 
+  const UNIT_EMOJI_MAP = {
+    'HELLO': '👋',
+    'GOODBYE': '👋',
+    'GOOD-MORNING': '🌅',
+    'GOOD-AFTERNOON': '☀️',
+    'GOOD-EVENING': '🌆',
+    'THANK-YOU': '🙏',
+    'THANK-YOU-TIME': '🙏🕒',
+    'PLEASE': '🤲',
+    'PLEASE-WAIT': '✋⏳',
+    'WAIT': '✋',
+    'STOP': '🛑',
+    'YES': '👍',
+    'NO': '👎',
+    'MAYBE': '🤷',
+    'OKAY': '👌',
+    'WELCOME': '🤗',
+    'SORRY': '😔',
+    'EXCUSE-ME': '🙋',
+    'I-UNDERSTAND': '🧠✅',
+    'I-DO-NOT-UNDERSTAND': '🧠❌',
+    'CAN-YOU-REPEAT-THAT': '🔁❓',
+    'PLEASE-REPEAT-THAT': '🤲🔁',
+    'PLEASE-SLOW-DOWN': '🤲🐢',
+    'PLEASE-SPEAK-SLOWLY': '🤲🗣️🐢',
+    'PLEASE-SIGN-SLOWLY': '🤲🤟🐢',
+    'I-NEED-HELP': '🆘',
+    'CAN-YOU-HELP-ME': '❓🤝',
+    'YOU-NEED-HELP': '👉🆘',
+    'EMERGENCY': '🚨',
+    'CALL-911': '📞🚨',
+    'WHAT-YOUR-NAME': '❓🪪',
+    'MY-NAME': '🙋🪪',
+    'WHAT-TIME': '❓🕒',
+    'MEETING-START-NOW': '🎬🕒',
+    'MEETING-FINISH': '🏁',
+    'START': '▶️',
+    'CAN-WE-START': '❓▶️',
+    'PLEASE-JOIN-MEETING': '🤲👥',
+    'PLEASE-CHECK-CHAT': '🤲💬',
+    'PLEASE-WRITE-DOWN': '🤲✍️',
+    'PLEASE-TYPE-CHAT': '🤲⌨️💬',
+    'YOU-UNDERSTAND': '👉🧠✅',
+    'YOU-READY': '👉✅',
+    'I-READY': '✅',
+    'I-NOT-READY': '❌',
+    'I-LATE': '⏰',
+    'I-EARLY': '⏱️',
+    'AUDIO-NOT-WORK': '🔇❌',
+    'VIDEO-NOT-WORK': '📹❌',
+    'CONNECTION-BAD': '📶❌',
+    'INTERNET-SLOW': '🌐🐢',
+    'CAN-YOU-REJOIN': '🔄❓',
+    'PLEASE-REJOIN': '🤲🔄',
+    'ONE-SECOND': '1️⃣',
+    'ONE-MINUTE': '1️⃣⏱️',
+    'SEE-YOU-LATER': '👋⏭️',
+    'SEE-YOU-TOMORROW': '👋🌤️',
+    'GOOD-JOB': '👏',
+    'GOOD-WORK': '👏💼',
+    'CAN-YOU-SEE-ME': '👀❓',
+    'CAN-YOU-HEAR-ME': '👂❓',
+    'WHAT-DAY-TODAY': '❓📅',
+    'TODAY-MONDAY': '📅1',
+    'TODAY-TUESDAY': '📅2',
+    'TODAY-WEDNESDAY': '📅3',
+    'TODAY-THURSDAY': '📅4',
+    'TODAY-FRIDAY': '📅5',
+    'TODAY-SATURDAY': '📅6',
+    'TODAY-SUNDAY': '📅7',
+  };
+
+  const FINGERSPELL_EMOJI_MAP = {
+    A: '✊',
+    B: '✋',
+    C: '🤏',
+    D: '☝️',
+    E: '✊',
+    F: '👌',
+    G: '👉',
+    H: '✌️',
+    I: '🤙',
+    J: '🤙',
+    K: '✌️',
+    L: '🤘',
+    M: '✊',
+    N: '✊',
+    O: '🫶',
+    P: '👇',
+    Q: '👇',
+    R: '🤞',
+    S: '👊',
+    T: '👍',
+    U: '✌️',
+    V: '✌️',
+    W: '🖖',
+    X: '☝️',
+    Y: '🤙',
+    Z: '☝️',
+  };
+
   const state = {
     queue: [],
     currentManifest: null,
@@ -16,12 +117,29 @@ const SignPlayer = (() => {
     lastCompletedManifest: null,
   };
 
+  function hasGestureUnits(manifest) {
+    if (!manifest || !Array.isArray(manifest.units) || !manifest.units.length) {
+      return false;
+    }
+
+    return manifest.units.some((unit) => {
+      if (!unit || !unit.id) return false;
+      return !unit.id.startsWith('FS-') && unit.id !== 'NO-SIGN-PLAN';
+    });
+  }
+
+  function setVisible(visible) {
+    if (!state.refs || !state.refs.section) return;
+    state.refs.section.style.display = visible ? '' : 'none';
+  }
+
   function mount(refs) {
     state.queue = [];
     stopCurrentPlayback();
     state.lastCompletedManifest = null;
     state.refs = refs;
     state.mounted = true;
+    setVisible(true);
     updateStatus('Waiting for ASL plan');
     updateQueue([]);
     updateReplayButton();
@@ -31,6 +149,15 @@ const SignPlayer = (() => {
     if (!manifest || !Array.isArray(manifest.units) || !manifest.units.length) {
       return;
     }
+
+    if (!hasGestureUnits(manifest)) {
+      // Do not replace a known sign with fingerspelling/no-gesture output.
+      // This keeps the panel stable and prevents it from disappearing when
+      // the planner falls back for a later utterance.
+      return;
+    }
+
+    setVisible(true);
 
     if (manifest.priority === 'urgent') {
       playManifest(manifest, true);
@@ -52,6 +179,7 @@ const SignPlayer = (() => {
     updateReplayButton();
     updateQueue([]);
     updateStatus('Waiting for ASL plan');
+    setVisible(true);
   }
 
   function updateStatus(message) {
@@ -64,13 +192,18 @@ const SignPlayer = (() => {
     if (!state.refs || !state.refs.unitList) return;
 
     if (!units.length) {
-      state.refs.unitList.innerHTML = '<div class="sf-sign-placeholder">ASL clips will appear here for finalized speech.</div>';
+      state.refs.unitList.innerHTML = '<div class="sf-sign-placeholder">ASL clips or emoji signs will appear here for finalized speech.</div>';
       return;
     }
 
     state.refs.unitList.innerHTML = units.map((unit) => {
-      const label = escapeHtml(unit.text || unit.id.replace(/^FS-/, '').replace(/-/g, ' '));
-      return `<div class="sf-sign-chip">${label}</div>`;
+      const presentation = getUnitPresentation(unit);
+      return `
+        <div class="sf-sign-chip">
+          <span class="sf-sign-chip-emoji">${escapeHtml(presentation.emoji)}</span>
+          <span>${escapeHtml(presentation.label)}</span>
+        </div>
+      `;
     }).join('');
   }
 
@@ -150,8 +283,9 @@ const SignPlayer = (() => {
         resolve();
       };
 
+      const presentation = getUnitPresentation(unit);
       if (state.refs && state.refs.label) {
-        state.refs.label.textContent = unit.text || unit.id.replace(/^FS-/, '').replace(/-/g, ' ');
+        state.refs.label.textContent = `${presentation.emoji} ${presentation.label}`;
       }
 
       if (unit.url && state.refs && state.refs.video) {
@@ -182,7 +316,13 @@ const SignPlayer = (() => {
 
   function showFallbackCard(unit) {
     if (!state.refs || !state.refs.fallbackCard) return;
-    state.refs.fallbackCard.textContent = unit.text || unit.id.replace(/^FS-/, '').replace(/-/g, ' ');
+    const presentation = getUnitPresentation(unit);
+    state.refs.fallbackCard.innerHTML = `
+      <div class="sf-sign-fallback-inner">
+        <div class="sf-sign-fallback-emoji">${escapeHtml(presentation.emoji)}</div>
+        <div class="sf-sign-fallback-text">${escapeHtml(presentation.label)}</div>
+      </div>
+    `;
     state.refs.fallbackCard.style.display = 'flex';
     if (state.refs.video) {
       state.refs.video.style.display = 'none';
@@ -239,10 +379,46 @@ const SignPlayer = (() => {
 
     if (state.refs && state.refs.fallbackCard) {
       state.refs.fallbackCard.style.display = 'none';
-      state.refs.fallbackCard.textContent = '';
+      state.refs.fallbackCard.innerHTML = '';
     }
 
     state.currentManifest = null;
+  }
+
+  function getUnitPresentation(unit) {
+    const rawLabel = normalizeLabel(unit);
+    const emoji = resolveEmoji(unit, rawLabel);
+    return {
+      emoji,
+      label: rawLabel,
+    };
+  }
+
+  function normalizeLabel(unit) {
+    if (unit.text) {
+      return unit.text.toUpperCase();
+    }
+    if (unit.id && unit.id.startsWith('FS-')) {
+      return unit.id.slice(3);
+    }
+    return (unit.id || 'SIGN').replace(/-/g, ' ');
+  }
+
+  function resolveEmoji(unit, label) {
+    if (unit.id && UNIT_EMOJI_MAP[unit.id]) {
+      return UNIT_EMOJI_MAP[unit.id];
+    }
+    if (unit.id && unit.id.startsWith('FS-')) {
+      const letter = unit.id.slice(3).toUpperCase();
+      return FINGERSPELL_EMOJI_MAP[letter] || '🤟';
+    }
+    if (unit.id && unit.id.startsWith('NUM-')) {
+      return '🔢';
+    }
+    if (label.includes('QUESTION') || label.includes('?')) {
+      return '❓';
+    }
+    return '🤟';
   }
 
   return {

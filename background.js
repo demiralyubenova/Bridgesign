@@ -6,6 +6,16 @@ chrome.storage.sync.get(['signflowServerUrl'], (res) => {
   if (res.signflowServerUrl) RELAY_SERVER_URL = res.signflowServerUrl;
 });
 
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'sync' && changes.signflowServerUrl) {
+    RELAY_SERVER_URL = changes.signflowServerUrl.newValue;
+    console.log('[SignFlow] Server URL updated:', RELAY_SERVER_URL);
+    if (ws && ws.readyState !== WebSocket.CLOSED) {
+      ws.close(); // Triggers auto-reconnect to the new URL
+    }
+  }
+});
+
 let ws = null;
 let currentRoomId = null;
 let currentRole = null;
@@ -26,11 +36,16 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(() => {
     connectedPorts.delete(tabId);
     if (connectedPorts.size === 0 && ws) {
-      ws.close();
-      ws = null;
-      currentRoomId = null;
     }
   });
+});
+
+// Handle browser coming back online
+self.addEventListener('online', () => {
+  if (currentRoomId && connectedPorts.size > 0 && (!ws || ws.readyState !== WebSocket.OPEN)) {
+    reconnectAttempts = 0;
+    joinRoom(currentRoomId, currentRole);
+  }
 });
 
 // Handle messages from content script
@@ -59,6 +74,10 @@ function handleContentMessage(tabId, msg) {
 
 // Connect to WebSocket relay and join room
 function joinRoom(roomId, role) {
+  if (currentRoomId && currentRoomId !== roomId && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'LEAVE' }));
+  }
+
   currentRoomId = roomId;
   if (role) currentRole = role;
 
@@ -99,6 +118,17 @@ function joinRoom(roomId, role) {
   ws.onclose = () => {
     broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: false, roomId: currentRoomId } });
     
+    if (!navigator.onLine) {
+      console.log('[SignFlow] Browser offline. Pausing reconnects.');
+      return;
+    }
+
+    if (reconnectAttempts >= 5) {
+      console.warn('[SignFlow] Max reconnect attempts reached.');
+      broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: false, roomId: currentRoomId, error: 'CONNECTION_FAILED' } });
+      return;
+    }
+
     // Exponential backoff
     const baseDelay = 1000;
     const maxDelay = 30000;

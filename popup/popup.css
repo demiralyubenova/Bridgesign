@@ -140,5 +140,74 @@ body {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.25);
   padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.server-config {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.server-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: white;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-family: 'Inter', sans-serif;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.server-input:focus {
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+.btn-save {
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: #a5b4fc;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-save:hover {
+  background: rgba(99, 102, 241, 0.3);
+}
+
+.btn-save.success {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: rgba(34, 197, 94, 0.4);
+}
+
+.popup-error {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.sync-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.latency-badge {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 9px;
+  font-weight: 600;
 }

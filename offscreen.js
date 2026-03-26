@@ -1,4 +1,4 @@
-// SignFlow Offscreen Document for MediaPipe Hands
+// BridgeSign Offscreen Document for MediaPipe Hands
 // Runs in extension context to bypass strict CSP on Meet pages
 
 let hands = null;
@@ -32,14 +32,14 @@ async function initHands() {
   });
 
   await hands.initialize();
-  console.log('[SignFlow Offscreen] MediaPipe Hands initialized successfully.');
+  console.log('[BridgeSign Offscreen] MediaPipe Hands initialized successfully.');
   
   // Notify background we're ready
   chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' });
 }
 
 initHands().catch(err => {
-  console.error('[SignFlow Offscreen] Initialization error:', err);
+  console.error('[BridgeSign Offscreen] Initialization error:', err);
 });
 
 // Listen for incoming video frames as Data URLs

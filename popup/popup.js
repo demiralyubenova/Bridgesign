@@ -1,4 +1,4 @@
-// SignFlow Popup Script
+// BridgeSign Popup Script
 // Shows extension status when clicking the browser action icon
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -8,17 +8,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const savePlannerBtn = document.getElementById('btn-save-planner');
 
   // Load saved server URL
-  chrome.storage.sync.get(['signflowServerUrl', 'signflowPlannerUrl'], (res) => {
-    if (res.signflowServerUrl) {
-      serverInput.value = res.signflowServerUrl;
+  chrome.storage.sync.get(['bridgesignServerUrl', 'bridgesignPlannerUrl', 'signflowServerUrl', 'signflowPlannerUrl'], (res) => {
+    if (res.bridgesignServerUrl || res.signflowServerUrl) {
+      serverInput.value = res.bridgesignServerUrl || res.signflowServerUrl;
     } else {
       serverInput.value = 'ws://localhost:3001';
     }
 
-    if (res.signflowPlannerUrl) {
-      plannerInput.value = res.signflowPlannerUrl;
+    if (res.bridgesignPlannerUrl || res.signflowPlannerUrl) {
+      plannerInput.value = res.bridgesignPlannerUrl || res.signflowPlannerUrl;
     } else {
-      plannerInput.value = 'http://localhost:8001';
+      plannerInput.value = 'http://127.0.0.1:8001';
     }
   });
 
@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
   saveBtn.addEventListener('click', () => {
     const newUrl = serverInput.value.trim();
     if (newUrl) {
-      chrome.storage.sync.set({ signflowServerUrl: newUrl }, () => {
+      chrome.storage.sync.set({ bridgesignServerUrl: newUrl }, () => {
         saveBtn.textContent = 'Saved!';
         saveBtn.classList.add('success');
         setTimeout(() => {
@@ -40,7 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
   savePlannerBtn.addEventListener('click', () => {
     const newUrl = plannerInput.value.trim();
     if (newUrl) {
-      chrome.storage.sync.set({ signflowPlannerUrl: newUrl }, () => {
+      chrome.storage.sync.set({ bridgesignPlannerUrl: newUrl }, () => {
         savePlannerBtn.textContent = 'Saved!';
         savePlannerBtn.classList.add('success');
         setTimeout(() => {
@@ -103,9 +103,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Get role from storage
-    chrome.storage.local.get('signflowRole', (data) => {
-      infoRole.textContent = data.signflowRole
-        ? (data.signflowRole === 'signer' ? '🤟 Signer' : '🗣️ Speaker')
+    chrome.storage.local.get('bridgesignRole', (data) => {
+      infoRole.textContent = data.bridgesignRole
+        ? (data.bridgesignRole === 'signer' ? '🤟 Signer' : '🗣️ Speaker')
         : '—';
     });
   });

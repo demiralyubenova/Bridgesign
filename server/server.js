@@ -1,4 +1,4 @@
-// SignFlow WebSocket Relay Server
+// BridgeSign WebSocket Relay Server
 // Lightweight room-based relay for syncing captions between participants
 
 const { WebSocketServer } = require('ws');
@@ -27,7 +27,7 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server, maxPayload: MAX_MSG_SIZE });
 server.listen(PORT, () => {
-  console.log(`\n  🤟 SignFlow Relay Server\n  ───────────────────────\n  Port: ${PORT}\n  Status: Ready\n`);
+  console.log(`\n  🤟 BridgeSign Relay Server\n  ───────────────────────\n  Port: ${PORT}\n  Status: Ready\n`);
 });
 
 wss.on('connection', (ws) => {

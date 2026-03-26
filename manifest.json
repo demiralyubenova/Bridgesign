@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "SignFlow",
+  "name": "BridgeSign",
   "version": "0.1.0",
   "description": "Real-time sign language ↔ speech translation for video calls",
   "permissions": [
@@ -19,7 +19,13 @@
   "content_scripts": [
     {
       "matches": ["https://meet.google.com/*"],
-      "js": ["motion-tracker.js", "asl-recognition.js", "sign-player.js", "content.js"],
+      "js": ["virtual-camera.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["meet-caption-scraper.js", "motion-tracker.js", "asl-recognition.js", "sign-player.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

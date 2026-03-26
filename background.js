@@ -1,22 +1,25 @@
-// SignFlow Background Service Worker
+// BridgeSign Background Service Worker
 // Manages per-tab relay sessions, sign-planning requests, and the offscreen ASL pipeline.
 
 let RELAY_SERVER_URL = 'ws://localhost:3001';
-let SIGN_PLAN_SERVER_URL = 'http://localhost:8001';
+let SIGN_PLAN_SERVER_URL = 'http://127.0.0.1:8001';
 
-chrome.storage.sync.get(['signflowServerUrl', 'signflowPlannerUrl'], (res) => {
-  if (res.signflowServerUrl) RELAY_SERVER_URL = res.signflowServerUrl;
-  if (res.signflowPlannerUrl) SIGN_PLAN_SERVER_URL = res.signflowPlannerUrl;
-});
+chrome.storage.sync.get(
+  ['bridgesignServerUrl', 'bridgesignPlannerUrl', 'signflowServerUrl', 'signflowPlannerUrl'],
+  (res) => {
+    RELAY_SERVER_URL = res.bridgesignServerUrl || res.signflowServerUrl || RELAY_SERVER_URL;
+    SIGN_PLAN_SERVER_URL = res.bridgesignPlannerUrl || res.signflowPlannerUrl || SIGN_PLAN_SERVER_URL;
+  }
+);
 
 const tabSessions = new Map(); // tabId -> { port, ws, roomId, role, reconnectAttempts, latencyMs, pingInterval, lastError }
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
   if (namespace !== 'sync') return;
 
-  if (changes.signflowServerUrl) {
-    RELAY_SERVER_URL = changes.signflowServerUrl.newValue;
-    console.log('[SignFlow] Server URL updated:', RELAY_SERVER_URL);
+  if (changes.bridgesignServerUrl || changes.signflowServerUrl) {
+    RELAY_SERVER_URL = changes.bridgesignServerUrl?.newValue || changes.signflowServerUrl?.newValue || RELAY_SERVER_URL;
+    console.log('[BridgeSign] Server URL updated:', RELAY_SERVER_URL);
     for (const session of tabSessions.values()) {
       if (session.ws && session.ws.readyState !== WebSocket.CLOSED) {
         session.ws.close();
@@ -24,14 +27,14 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     }
   }
 
-  if (changes.signflowPlannerUrl) {
-    SIGN_PLAN_SERVER_URL = changes.signflowPlannerUrl.newValue;
-    console.log('[SignFlow] Sign planner URL updated:', SIGN_PLAN_SERVER_URL);
+  if (changes.bridgesignPlannerUrl || changes.signflowPlannerUrl) {
+    SIGN_PLAN_SERVER_URL = changes.bridgesignPlannerUrl?.newValue || changes.signflowPlannerUrl?.newValue || SIGN_PLAN_SERVER_URL;
+    console.log('[BridgeSign] Sign planner URL updated:', SIGN_PLAN_SERVER_URL);
   }
 });
 
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== 'signflow' || !port.sender.tab) return;
+  if (port.name !== 'bridgesign' || !port.sender.tab) return;
 
   const tabId = port.sender.tab.id;
   const session = {
@@ -180,7 +183,7 @@ function attachWebSocketHandlers(tabId, session) {
         liveSession.lastError = msg.message || 'Unknown relay error';
       }
     } catch (error) {
-      console.error('[SignFlow] Failed to parse WS message:', error);
+      console.error('[BridgeSign] Failed to parse WS message:', error);
     }
   };
 
@@ -189,7 +192,7 @@ function attachWebSocketHandlers(tabId, session) {
     if (!liveSession || liveSession.ws !== socket) return;
 
     liveSession.lastError = 'WebSocket connection error';
-    console.error('[SignFlow] WebSocket error:', error);
+    console.error('[BridgeSign] WebSocket error:', error);
     sendToTab(tabId, { type: 'STATE_UPDATE', data: { connected: false, roomId: liveSession.roomId } });
   };
 
@@ -288,7 +291,7 @@ async function requestAndSendSignPlan(tabId, data) {
     }
   } catch (error) {
     session.lastError = error && error.message ? error.message : 'Failed to build sign plan';
-    console.warn('[SignFlow] Failed to build sign plan:', session.lastError);
+    console.warn('[BridgeSign] Failed to build sign plan:', session.lastError);
   }
 }
 
@@ -364,10 +367,10 @@ async function hasOffscreenDocument() {
       contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT]
     });
     return contexts.length > 0;
-  } else {
-    const matchedClients = await clients.matchAll();
-    return matchedClients.some((c) => c.url.includes('offscreen.html'));
   }
+
+  const matchedClients = await clients.matchAll();
+  return matchedClients.some((c) => c.url.includes('offscreen.html'));
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

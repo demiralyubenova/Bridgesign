@@ -1,4 +1,4 @@
-// SignFlow ASL Fingerspelling Recognition Module
+// BridgeSign ASL Fingerspelling Recognition Module
 // Uses MediaPipe Hands for landmark detection + a classifier for ASL alphabet
 
 const ASLRecognition = (() => {
@@ -174,7 +174,7 @@ const ASLRecognition = (() => {
       await videoElement.play();
       return true;
     } catch (err) {
-      console.error('[SignFlow ASL] Camera access failed:', err);
+      console.error('[BridgeSign ASL] Camera access failed:', err);
       return false;
     }
   }
@@ -387,7 +387,7 @@ const ASLRecognition = (() => {
       // Step 1: Initialize camera
       const cameraOk = await initializeCamera();
       if (!cameraOk) {
-        console.warn('[SignFlow] Dedicated camera failed, attempting to hijack Meet video element');
+        console.warn('[BridgeSign] Dedicated camera failed, attempting to hijack Meet video element');
         const meetVideo = document.querySelector('video');
         if (meetVideo) {
           videoElement = meetVideo;
@@ -410,7 +410,7 @@ const ASLRecognition = (() => {
 
       return true;
     } catch (err) {
-      console.error('[SignFlow ASL] Failed to start:', err);
+      console.error('[BridgeSign ASL] Failed to start:', err);
       isActive = false;
       return err.message;
     }

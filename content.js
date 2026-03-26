@@ -1,10 +1,10 @@
-// SignFlow Content Script
+// BridgeSign Content Script
 // Definitive Modern Dashboard Integration (VoiceToolbar)
 
 (function () {
   'use strict';
 
-  if (document.getElementById('signflow-root')) return;
+  if (document.getElementById('bridgesign-root')) return;
 
   // ==================== STATE ====================
   const state = {
@@ -272,7 +272,7 @@
   }
 
   // ==================== RECOGNITION CALLS ====================
-  const port = chrome.runtime.connect({ name: 'signflow' });
+  const port = chrome.runtime.connect({ name: 'bridgesign' });
 
   port.onMessage.addListener((msg) => {
     switch (msg.type) {
@@ -304,15 +304,15 @@
   }
 
   function showRoleSelector() {
-    const existing = document.getElementById('signflow-role-selector');
+    const existing = document.getElementById('bridgesign-role-selector');
     if (existing) existing.remove();
 
     const overlay = document.createElement('div');
-    overlay.id = 'signflow-role-selector';
+    overlay.id = 'bridgesign-role-selector';
     overlay.className = 'vt-role-selector-overlay';
     overlay.innerHTML = `
       <div class="vt-role-card">
-        <h2 class="vt-role-title">SignFlow</h2>
+        <h2 class="vt-role-title">BridgeSign</h2>
         <p class="vt-role-subtitle">Choose your communication mode:</p>
         <div class="vt-role-options">
           <button class="vt-role-btn" data-role="signer">
@@ -328,19 +328,40 @@
     `;
 
     overlay.querySelectorAll('.vt-role-btn').forEach(btn => {
-      btn.onclick = () => {
-        state.role = btn.dataset.role;
+      btn.onclick = async (e) => {
+        const target = e.currentTarget;
+        state.role = target.dataset.role;
         overlay.remove();
-        startSession();
+        await startSession();
       };
     });
     document.body.appendChild(overlay);
   }
 
-  function startSession() {
+  async function startSession() {
     const root = document.createElement('div');
-    root.id = 'signflow-root';
+    root.id = 'bridgesign-root';
     document.body.appendChild(root);
+
+    // If signer, inject PiP window
+    if (state.role === 'signer') {
+      const existingPip = document.getElementById('sf-pip-container');
+      if (existingPip) existingPip.remove();
+
+      const pip = document.createElement('div');
+      pip.id = 'sf-pip-container';
+      pip.className = 'sf-pip-container';
+      pip.style.display = 'block'; // Ensure it starts visible
+      pip.innerHTML = `
+        <div class="sf-pip-header" id="sf-pip-header">ASL PREVIEW</div>
+        <canvas class="sf-pip-canvas" id="sf-pip-canvas"></canvas>
+        <div class="sf-pip-label-wrap">
+          <span class="sf-pip-label" id="sf-pip-label">-</span>
+        </div>
+      `;
+      document.body.appendChild(pip);
+      initDraggable(pip, pip.querySelector('#sf-pip-header'));
+    }
 
     state.toolbar = new VoiceToolbar({ container: root, sessionId: getRoomId() });
     state.toolbar.mount();
@@ -356,15 +377,29 @@
       });
     }
 
-    // Init Draggable
+    chrome.storage.local.set({ bridgesignRole: state.role });
+
+    // Init Draggable Dashboard
     initDraggable(root, document.getElementById('sf-drag-handle'));
 
     // Join room
     port.postMessage({ type: 'JOIN_ROOM', roomId: getRoomId(), role: state.role });
 
     // Recognition
-    if (state.role === 'speaker') startSpeechRecognition();
-    else startASLRecognition();
+    if (state.role === 'speaker') {
+      startSpeechRecognition();
+    } else {
+      // Activate virtual camera subtitle overlay (cross-world event)
+      document.dispatchEvent(new CustomEvent('bridgesign-vcam-activate'));
+      await startASLRecognition();
+
+      // Start scraping Meet's built-in CC so the signer can read speech
+      if (window.__BridgeSignCaptionScraper) {
+        window.__BridgeSignCaptionScraper.start((cap) => {
+          state.toolbar.addTranscript({ speaker: cap.speaker, text: cap.text, partial: false });
+        });
+      }
+    }
 
     // Load settings
     chrome.storage.local.get(['sfSettings', 'overlayPos'], (res) => {
@@ -380,7 +415,7 @@
 
   function updateSettings(s) {
     state.settings = { ...state.settings, ...s };
-    const root = document.getElementById('signflow-root');
+    const root = document.getElementById('bridgesign-root');
     if (root) {
       root.style.setProperty('--sf-font-size', state.settings.fontSize);
       root.style.setProperty('--sf-bg-opacity', state.settings.opacity);
@@ -391,12 +426,18 @@
 
   function switchRole() {
     if (state.role === 'speaker') stopSpeechRecognition();
-    else stopASLRecognition();
+    else {
+      stopASLRecognition();
+      document.dispatchEvent(new CustomEvent('bridgesign-vcam-stop'));
+      if (window.__BridgeSignCaptionScraper) window.__BridgeSignCaptionScraper.stop();
+    }
     if (window.SignPlayer) {
       window.SignPlayer.reset();
     }
-    const root = document.getElementById('signflow-root');
+    const root = document.getElementById('bridgesign-root');
     if (root) root.remove();
+    const pip = document.getElementById('sf-pip-container');
+    if (pip) pip.remove();
     showRoleSelector();
   }
 
@@ -411,6 +452,8 @@
     speechRec.continuous = true;
     speechRec.interimResults = true;
     speechRec.onresult = (e) => {
+      if (isMuted()) return;
+
       let interim = '', final = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) final += e.results[i][0].transcript;
@@ -430,12 +473,23 @@
   }
   function stopSpeechRecognition() { if (speechRec) { speechRec.onend = null; speechRec.stop(); } }
 
-  function startASLRecognition() {
+  async function startASLRecognition() {
     if (window.ASLRecognition) {
-      window.ASLRecognition.start((text, partial) => {
+      state.toolbar.setListening(true);
+      const result = await window.ASLRecognition.start((text, partial) => {
         state.toolbar.addTranscript({ speaker: 'You', text, partial });
         port.postMessage({ type: 'CAPTION', data: { source: 'sign', text, partial } });
+
+        // Push caption text onto the virtual camera overlay (cross-world event)
+        document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text } }));
       });
+
+      if (result !== true) {
+        state.toolbar.setListening(false);
+        showNotification(`⚠️ Signer Failed: ${result || 'Unknown error'}`);
+      }
+    } else {
+      showNotification('⚠️ ASL Recognition module not loaded');
     }
   }
   function stopASLRecognition() { if (window.ASLRecognition) window.ASLRecognition.stop(); }
@@ -470,9 +524,20 @@
     const blob = new Blob([state.fullTranscript.map(l => `[${l.timestamp}] ${l.speaker}: ${l.text}`).join('\n')], { type: 'text/plain' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `SignFlow_Transcript_${getRoomId()}.txt`;
+    a.download = `BridgeSign_Transcript_${getRoomId()}.txt`;
     a.click();
     showNotification('✅ Downloaded');
+  }
+
+  function isMuted() {
+    const micBtn = document.querySelector('button[data-is-muted]');
+    if (micBtn) return micBtn.getAttribute('data-is-muted') === 'true';
+    const btn = document.querySelector('button[aria-label*="microphone"]');
+    if (btn) {
+      const label = btn.getAttribute('aria-label').toLowerCase();
+      return label.includes('turn on');
+    }
+    return false;
   }
 
   function showNotification(msg) {
@@ -491,10 +556,10 @@
   function check() {
     const isMeet = /\/[a-z]{3}-[a-z]{4}-[a-z]{3}/.test(window.location.pathname);
     if (!isMeet) {
-      if (document.getElementById('signflow-root')) document.getElementById('signflow-root').remove();
+      if (document.getElementById('bridgesign-root')) document.getElementById('bridgesign-root').remove();
       return;
     }
-    if (document.getElementById('signflow-root') || document.getElementById('signflow-role-selector')) return;
+    if (document.getElementById('bridgesign-root') || document.getElementById('bridgesign-role-selector')) return;
     if (document.querySelector('video')) injectUI();
   }
 

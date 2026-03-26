@@ -352,10 +352,26 @@
   }
 
   // ==================== INIT ====================
+  function isMeetingUrl() {
+    return /\/[a-zA-Z0-9]{3}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{3}/.test(window.location.pathname);
+  }
+
   function checkAndInject() {
-    if (document.getElementById('signflow-root') || document.getElementById('signflow-role-selector')) {
+    const isMeeting = isMeetingUrl();
+    const sfRoot = document.getElementById('signflow-root');
+    const sfSelector = document.getElementById('signflow-role-selector');
+    const hasUI = !!(sfRoot || sfSelector);
+
+    if (!isMeeting) {
+      if (hasUI) {
+        if (sfRoot) sfRoot.remove();
+        if (sfSelector) sfSelector.remove();
+      }
       return;
     }
+
+    if (hasUI) return;
+
     const meetContainer = document.querySelector('[data-meeting-title]') ||
                           document.querySelector('[data-call-id]') ||
                           document.querySelector('div[jscontroller]');
@@ -368,9 +384,7 @@
     checkAndInject();
 
     const observer = new MutationObserver(() => {
-      if (!document.getElementById('signflow-root') && !document.getElementById('signflow-role-selector')) {
-        checkAndInject();
-      }
+      checkAndInject();
     });
 
     observer.observe(document.body, { childList: true, subtree: true });

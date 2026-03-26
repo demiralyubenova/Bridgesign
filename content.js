@@ -352,26 +352,42 @@
   }
 
   // ==================== INIT ====================
-  function init() {
-    // Wait for Meet to fully load
-    const checkMeetReady = setInterval(() => {
-      // Look for Meet's main container (the call UI)
-      const meetContainer = document.querySelector('[data-meeting-title]') ||
-                            document.querySelector('[data-call-id]') ||
-                            document.querySelector('div[jscontroller]');
-      if (meetContainer || document.querySelectorAll('video').length > 0) {
-        clearInterval(checkMeetReady);
-        setTimeout(() => injectUI(), 1000);
-      }
-    }, 2000);
+  function isMeetingUrl() {
+    return /\/[a-zA-Z0-9]{3}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{3}/.test(window.location.pathname);
+  }
 
-    // Failsafe: inject after 10 seconds regardless
-    setTimeout(() => {
-      clearInterval(checkMeetReady);
-      if (!document.getElementById('signflow-root') && !document.getElementById('signflow-role-selector')) {
-        injectUI();
+  function checkAndInject() {
+    const isMeeting = isMeetingUrl();
+    const sfRoot = document.getElementById('signflow-root');
+    const sfSelector = document.getElementById('signflow-role-selector');
+    const hasUI = !!(sfRoot || sfSelector);
+
+    if (!isMeeting) {
+      if (hasUI) {
+        if (sfRoot) sfRoot.remove();
+        if (sfSelector) sfSelector.remove();
       }
-    }, 10000);
+      return;
+    }
+
+    if (hasUI) return;
+
+    const meetContainer = document.querySelector('[data-meeting-title]') ||
+                          document.querySelector('[data-call-id]') ||
+                          document.querySelector('div[jscontroller]');
+    if (meetContainer || document.getElementsByTagName('video').length > 0) {
+      injectUI();
+    }
+  }
+
+  function init() {
+    checkAndInject();
+
+    const observer = new MutationObserver(() => {
+      checkAndInject();
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   // Start when DOM is ready

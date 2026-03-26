@@ -352,26 +352,28 @@
   }
 
   // ==================== INIT ====================
-  function init() {
-    // Wait for Meet to fully load
-    const checkMeetReady = setInterval(() => {
-      // Look for Meet's main container (the call UI)
-      const meetContainer = document.querySelector('[data-meeting-title]') ||
-                            document.querySelector('[data-call-id]') ||
-                            document.querySelector('div[jscontroller]');
-      if (meetContainer || document.querySelectorAll('video').length > 0) {
-        clearInterval(checkMeetReady);
-        setTimeout(() => injectUI(), 1000);
-      }
-    }, 2000);
+  function checkAndInject() {
+    if (document.getElementById('signflow-root') || document.getElementById('signflow-role-selector')) {
+      return;
+    }
+    const meetContainer = document.querySelector('[data-meeting-title]') ||
+                          document.querySelector('[data-call-id]') ||
+                          document.querySelector('div[jscontroller]');
+    if (meetContainer || document.getElementsByTagName('video').length > 0) {
+      injectUI();
+    }
+  }
 
-    // Failsafe: inject after 10 seconds regardless
-    setTimeout(() => {
-      clearInterval(checkMeetReady);
+  function init() {
+    checkAndInject();
+
+    const observer = new MutationObserver(() => {
       if (!document.getElementById('signflow-root') && !document.getElementById('signflow-role-selector')) {
-        injectUI();
+        checkAndInject();
       }
-    }, 10000);
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   // Start when DOM is ready

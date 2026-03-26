@@ -407,6 +407,8 @@
     speechRec.continuous = true;
     speechRec.interimResults = true;
     speechRec.onresult = (e) => {
+      if (isMuted()) return;
+
       let interim = '', final = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) final += e.results[i][0].transcript;
@@ -480,6 +482,17 @@
     a.download = `SignFlow_Transcript_${getRoomId()}.txt`;
     a.click();
     showNotification('✅ Downloaded');
+  }
+
+  function isMuted() {
+    const micBtn = document.querySelector('button[data-is-muted]');
+    if (micBtn) return micBtn.getAttribute('data-is-muted') === 'true';
+    const btn = document.querySelector('button[aria-label*="microphone"]');
+    if (btn) {
+      const label = btn.getAttribute('aria-label').toLowerCase();
+      return label.includes('turn on');
+    }
+    return false;
   }
 
   function showNotification(msg) {

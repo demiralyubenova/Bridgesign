@@ -1,4 +1,4 @@
-# SignFlow 🤟
+# BridgeSign🤟
 
 **Real-time sign language ↔ speech translation for video calls**
 

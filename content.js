@@ -344,8 +344,20 @@
     port.postMessage({ type: 'JOIN_ROOM', roomId: getRoomId(), role: state.role });
 
     // Recognition
-    if (state.role === 'speaker') startSpeechRecognition();
-    else await startASLRecognition();
+    if (state.role === 'speaker') {
+      startSpeechRecognition();
+    } else {
+      // Activate virtual camera subtitle overlay (cross-world event)
+      document.dispatchEvent(new CustomEvent('signflow-vcam-activate'));
+      await startASLRecognition();
+
+      // Start scraping Meet's built-in CC so the signer can read speech
+      if (window.__SignFlowCaptionScraper) {
+        window.__SignFlowCaptionScraper.start((cap) => {
+          state.toolbar.addTranscript({ speaker: cap.speaker, text: cap.text, partial: false });
+        });
+      }
+    }
 
     // Load settings
     chrome.storage.local.get(['sfSettings', 'overlayPos'], (res) => {
@@ -372,7 +384,11 @@
 
   function switchRole() {
     if (state.role === 'speaker') stopSpeechRecognition();
-    else stopASLRecognition();
+    else {
+      stopASLRecognition();
+      document.dispatchEvent(new CustomEvent('signflow-vcam-stop'));
+      if (window.__SignFlowCaptionScraper) window.__SignFlowCaptionScraper.stop();
+    }
     const root = document.getElementById('signflow-root');
     if (root) root.remove();
     const pip = document.getElementById('sf-pip-container');
@@ -416,6 +432,9 @@
       const result = await window.ASLRecognition.start((text, partial) => {
         state.toolbar.addTranscript({ speaker: 'You', text, partial });
         port.postMessage({ type: 'CAPTION', data: { source: 'sign', text, partial } });
+
+        // Push caption text onto the virtual camera overlay (cross-world event)
+        document.dispatchEvent(new CustomEvent('signflow-vcam-caption', { detail: { text } }));
       });
 
       if (result !== true) {

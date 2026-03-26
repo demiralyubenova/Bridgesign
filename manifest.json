@@ -17,7 +17,13 @@
   "content_scripts": [
     {
       "matches": ["https://meet.google.com/*"],
-      "js": ["motion-tracker.js", "asl-recognition.js", "content.js"],
+      "js": ["virtual-camera.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["meet-caption-scraper.js", "motion-tracker.js", "asl-recognition.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

@@ -291,6 +291,7 @@
       console.error('[SignFlow] Speech recognition error:', event.error);
       if (event.error === 'not-allowed') {
         showNotification('Microphone access denied. Please enable it.');
+        port.postMessage({ type: 'EXTENSION_ERROR', message: 'Microphone access denied.' });
       }
       // Auto-restart on non-fatal errors
       if (event.error !== 'not-allowed' && event.error !== 'service-not-allowed') {
@@ -341,6 +342,7 @@
         showNotification('✅ ASL fingerspelling active — hold each letter steady for about a second');
       } else {
         showNotification('❌ Failed to start ASL recognition. Check camera permissions.');
+        port.postMessage({ type: 'EXTENSION_ERROR', message: 'Camera access denied.' });
       }
     });
   }

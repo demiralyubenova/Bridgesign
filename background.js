@@ -6,9 +6,22 @@ chrome.storage.sync.get(['signflowServerUrl'], (res) => {
   if (res.signflowServerUrl) RELAY_SERVER_URL = res.signflowServerUrl;
 });
 
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'sync' && changes.signflowServerUrl) {
+    RELAY_SERVER_URL = changes.signflowServerUrl.newValue;
+    console.log('[SignFlow] Server URL updated:', RELAY_SERVER_URL);
+    if (ws && ws.readyState !== WebSocket.CLOSED) {
+      ws.close(); // Triggers auto-reconnect to the new URL
+    }
+  }
+});
+
 let ws = null;
 let currentRoomId = null;
 let currentRole = null;
+let lastAppError = null;
+let latencyMs = 0;
+let pingInterval = null;
 let connectedPorts = new Map(); // tabId -> port
 let reconnectAttempts = 0;
 
@@ -26,11 +39,16 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(() => {
     connectedPorts.delete(tabId);
     if (connectedPorts.size === 0 && ws) {
-      ws.close();
-      ws = null;
-      currentRoomId = null;
     }
   });
+});
+
+// Handle browser coming back online
+self.addEventListener('online', () => {
+  if (currentRoomId && connectedPorts.size > 0 && (!ws || ws.readyState !== WebSocket.OPEN)) {
+    reconnectAttempts = 0;
+    joinRoom(currentRoomId, currentRole);
+  }
 });
 
 // Handle messages from content script
@@ -41,6 +59,9 @@ function handleContentMessage(tabId, msg) {
       break;
     case 'LEAVE_ROOM':
       leaveRoom();
+      break;
+    case 'EXTENSION_ERROR':
+      lastAppError = msg.message;
       break;
     case 'CAPTION':
       sendCaption(msg.data);
@@ -59,6 +80,10 @@ function handleContentMessage(tabId, msg) {
 
 // Connect to WebSocket relay and join room
 function joinRoom(roomId, role) {
+  if (currentRoomId && currentRoomId !== roomId && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'LEAVE' }));
+  }
+
   currentRoomId = roomId;
   if (role) currentRole = role;
 
@@ -74,6 +99,13 @@ function joinRoom(roomId, role) {
     reconnectAttempts = 0;
     ws.send(JSON.stringify({ type: 'JOIN', roomId, role: currentRole }));
     broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: true, roomId } });
+    
+    if (pingInterval) clearInterval(pingInterval);
+    pingInterval = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'PING', timestamp: Date.now() }));
+      }
+    }, 2000);
   };
 
   ws.onmessage = (event) => {
@@ -85,6 +117,8 @@ function joinRoom(roomId, role) {
         broadcastToTabs({ type: 'PEER_JOINED', data: msg.data });
       } else if (msg.type === 'PEER_LEFT') {
         broadcastToTabs({ type: 'PEER_LEFT', data: msg.data });
+      } else if (msg.type === 'PONG') {
+        latencyMs = Date.now() - msg.timestamp;
       }
     } catch (e) {
       console.error('[SignFlow] Failed to parse WS message:', e);
@@ -97,8 +131,21 @@ function joinRoom(roomId, role) {
   };
 
   ws.onclose = () => {
+    if (pingInterval) clearInterval(pingInterval);
+    latencyMs = 0;
     broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: false, roomId: currentRoomId } });
     
+    if (!navigator.onLine) {
+      console.log('[SignFlow] Browser offline. Pausing reconnects.');
+      return;
+    }
+
+    if (reconnectAttempts >= 5) {
+      console.warn('[SignFlow] Max reconnect attempts reached.');
+      broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: false, roomId: currentRoomId, error: 'CONNECTION_FAILED' } });
+      return;
+    }
+
     // Exponential backoff
     const baseDelay = 1000;
     const maxDelay = 30000;
@@ -237,7 +284,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       connected: ws && ws.readyState === WebSocket.OPEN,
       roomId: currentRoomId,
       peers: connectedPorts.size,
+      error: lastAppError,
+      latency: latencyMs
     });
+    // Clear the error after viewing it once
+    lastAppError = null;
     return true;
   }
 });

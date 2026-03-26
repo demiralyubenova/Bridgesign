@@ -109,6 +109,11 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'PING': {
+        ws.send(JSON.stringify({ type: 'PONG', timestamp: msg.timestamp }));
+        break;
+      }
+
       case 'CAPTION': {
         if (!currentRoom) return;
 

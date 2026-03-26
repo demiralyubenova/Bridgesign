@@ -127,6 +127,7 @@
             <button class="sf-btn" id="sf-btn-role" title="Switch role">
               ${state.role === 'signer' ? '🤟' : '🗣️'} ${state.role === 'signer' ? 'Signer' : 'Speaker'}
             </button>
+            ${state.role === 'signer' ? '<button class="sf-btn" id="sf-btn-record" title="Record a custom sign">REC</button>' : ''}
             <button class="sf-btn" id="sf-btn-minimize" title="Minimize">─</button>
           </div>
         </div>
@@ -164,6 +165,14 @@
       showRoleSelector();
     });
 
+    const recordButton = document.getElementById('sf-btn-record');
+    if (recordButton) {
+      recordButton.addEventListener('click', () => {
+        toggleSignRecording();
+      });
+      updateRecorderButton();
+    }
+
     updateStatusUI();
   }
 
@@ -192,6 +201,50 @@
     captionsEl.scrollTop = captionsEl.scrollHeight;
 
     setTimeout(() => line.remove(), 5000);
+  }
+
+  function updateRecorderButton() {
+    const recordButton = document.getElementById('sf-btn-record');
+    if (!recordButton || !window.WordRecognition) return;
+
+    const status = window.WordRecognition.getRecordingStatus
+      ? window.WordRecognition.getRecordingStatus()
+      : { recording: false, label: null };
+
+    recordButton.classList.toggle('active', Boolean(status.recording));
+    recordButton.textContent = status.recording ? 'STOP' : 'REC';
+    recordButton.title = status.recording
+      ? `Stop recording ${status.label || 'sign'}`
+      : 'Record a custom sign';
+  }
+
+  async function toggleSignRecording() {
+    if (!window.WordRecognition) {
+      showNotification('Custom sign recorder not available');
+      return;
+    }
+
+    if (window.WordRecognition.isRecording && window.WordRecognition.isRecording()) {
+      const result = await window.WordRecognition.stopRecording();
+      updateRecorderButton();
+      if (result.success) {
+        showNotification(`Saved sign sample for "${result.label}" (${result.samples} samples)`);
+      } else {
+        showNotification(`Recording failed: ${result.error || 'unknown error'}`);
+      }
+      return;
+    }
+
+    const label = window.prompt('Enter the word or phrase for this sign sample:');
+    if (!label || !label.trim()) return;
+
+    const result = await window.WordRecognition.startRecording(label.trim());
+    updateRecorderButton();
+    if (result.success) {
+      showNotification(`Recording "${result.label}". Hold the sign, then press REC again to save.`);
+    } else {
+      showNotification(`Could not start recording: ${result.error || 'unknown error'}`);
+    }
   }
 
   // ==================== CAPTIONS ====================
@@ -327,7 +380,7 @@
 
   // ==================== ASL RECOGNITION ====================
   function startASLRecognition() {
-    showNotification('Starting ASL fingerspelling recognition... (webcam required)');
+    showNotification('Starting ASL recognition... use REC to teach custom whole-sign words');
 
     if (!window.ASLRecognition) {
       showNotification('❌ ASL recognition module not loaded');
@@ -346,6 +399,10 @@
   }
 
   function stopASLRecognition() {
+    if (window.WordRecognition && window.WordRecognition.isRecording && window.WordRecognition.isRecording()) {
+      window.WordRecognition.cancelRecording();
+    }
+    updateRecorderButton();
     if (window.ASLRecognition) {
       window.ASLRecognition.stop();
     }

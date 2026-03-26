@@ -144,11 +144,22 @@ let creatingOffscreen;
 let activeSignerTabId = null;
 let offscreenReady = false;
 let offscreenReadyWaiters = [];
+let offscreenError = null;
 
 function resolveOffscreenReady() {
   offscreenReady = true;
+  offscreenError = null;
   for (const resolve of offscreenReadyWaiters) {
     resolve(true);
+  }
+  offscreenReadyWaiters = [];
+}
+
+function rejectOffscreenReady(message) {
+  offscreenReady = false;
+  offscreenError = message || 'Unknown offscreen initialization error';
+  for (const resolve of offscreenReadyWaiters) {
+    resolve(false);
   }
   offscreenReadyWaiters = [];
 }
@@ -159,6 +170,7 @@ function waitForOffscreenReady(timeoutMs = 5000) {
   return new Promise((resolve) => {
     const timeoutId = setTimeout(() => {
       offscreenReadyWaiters = offscreenReadyWaiters.filter((fn) => fn !== onReady);
+      offscreenError = offscreenError || 'Timed out waiting for offscreen document';
       resolve(false);
     }, timeoutMs);
 
@@ -171,8 +183,26 @@ function waitForOffscreenReady(timeoutMs = 5000) {
   });
 }
 
-async function setupOffscreenDocument() {
-  if (await hasOffscreenDocument()) return;
+async function closeOffscreenDocument() {
+  if (!await hasOffscreenDocument()) return;
+  await chrome.offscreen.closeDocument();
+  offscreenReady = false;
+}
+
+async function setupOffscreenDocument(forceRecreate = false) {
+  const hasDocument = await hasOffscreenDocument();
+
+  if (forceRecreate && hasDocument) {
+    await closeOffscreenDocument();
+  } else if (hasDocument && offscreenReady) {
+    return;
+  } else if (hasDocument && !offscreenReady) {
+    await closeOffscreenDocument();
+  }
+
+  offscreenReady = false;
+  offscreenError = null;
+
   if (creatingOffscreen) {
     await creatingOffscreen;
   } else {
@@ -204,8 +234,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'START_OFFSCREEN') {
     setupOffscreenDocument()
       .then(() => waitForOffscreenReady())
-      .then((ready) => sendResponse({ success: ready }))
-      .catch(() => sendResponse({ success: false }));
+      .then((ready) => sendResponse({ success: ready, error: ready ? null : offscreenError }))
+      .catch((error) => sendResponse({ success: false, error: error && error.message ? error.message : 'Failed to start offscreen document' }));
     return true; // Keep channel open for async response
   }
   
@@ -229,6 +259,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'OFFSCREEN_READY') {
     resolveOffscreenReady();
+    return false;
+  }
+
+  if (msg.type === 'OFFSCREEN_ERROR') {
+    rejectOffscreenReady(msg.error);
     return false;
   }
 

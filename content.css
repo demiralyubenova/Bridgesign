@@ -58,18 +58,41 @@
 
 /* ========== Header Layout (The Grid Secret-Sauce) ========== */
 .sf-header {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
-  padding: 14px 20px;
+  justify-content: space-between;
+  padding: 10px 20px;
   width: 100%;
-  transition: all 0.3s ease;
+}
+
+.sf-header-left, .sf-header-right {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.sf-header-right {
+  justify-content: flex-end;
+}
+
+/* Use the Brand/Logo as the drag handle */
+#sf-drag-handle {
+  cursor: grab;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+#sf-drag-handle:active {
+  cursor: grabbing;
 }
 
 .sf-brand {
   display: flex;
   align-items: center;
-  justify-self: start;
+  gap: 8px;
 }
 
 .sf-logo {
@@ -93,15 +116,15 @@
 .sf-status {
   display: flex;
   align-items: center;
-  width: 105%;
+  width: auto;
   gap: 8px;
   background: rgba(255, 255, 255, 0.05);
   padding: 6px 16px;
   border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.05);
-  justify-self: center;
+  flex-shrink: 0;
   min-width: 0;
-  max-width: 250%;
+  max-width: 250px;
   overflow: hidden;
 }
 
@@ -137,15 +160,14 @@
 .sf-controls {
   display: flex;
   align-items: center;
-  justify-self: end;
-  gap: 8px;
+  gap: 12px;
+  z-index: 2;
 }
 
 .sf-btn {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: white;
-  width: 105%;
   border-radius: 4px;
   padding: 8px 16px;
   font-size: 13px;
@@ -156,6 +178,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 
 .sf-btn:hover {
@@ -175,7 +198,7 @@
   padding: 0;
   margin-right: 5px;
   width: 20px;
-  height: 15px;
+  height: 20px;
   border-radius: 50%;
   display: flex;
   align-items: center;

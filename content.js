@@ -112,22 +112,37 @@
   function createCaptionOverlay() {
     const root = document.createElement('div');
     root.id = 'signflow-root';
+    
+    // Load saved position
+    chrome.storage.local.get(['overlayPos'], (result) => {
+      if (result.overlayPos) {
+        root.style.top = result.overlayPos.top;
+        root.style.left = result.overlayPos.left;
+        root.style.bottom = 'auto';
+        root.style.transform = 'none';
+      }
+    });
+
     root.innerHTML = `
       <div class="sf-caption-bar" id="sf-caption-bar">
         <div class="sf-header">
-          <div class="sf-brand">
-            <div class="sf-logo">SF</div>
-            <span class="sf-brand-name">SignFlow</span>
+          <div class="sf-header-left">
+            <div class="sf-brand" id="sf-drag-handle" title="Drag to move">
+              <div class="sf-logo">SF</div>
+              <span class="sf-brand-name">SignFlow</span>
+            </div>
           </div>
-          <div class="sf-status">
+          <div class="sf-status" id="sf-status-box">
             <div class="sf-status-dot" id="sf-status-dot"></div>
             <span class="sf-status-text" id="sf-status-text">Connecting...</span>
           </div>
-          <div class="sf-controls">
-            <button class="sf-btn" id="sf-btn-role" title="Switch role">
-              ${state.role === 'signer' ? '🤟' : '🗣️'} ${state.role === 'signer' ? 'Signer' : 'Speaker'}
-            </button>
-            <button class="sf-btn" id="sf-btn-minimize" title="Minimize">─</button>
+          <div class="sf-header-right">
+            <div class="sf-controls">
+              <button class="sf-btn" id="sf-btn-role" title="Switch role">
+                ${state.role === 'signer' ? '🤟' : '🗣️'} ${state.role === 'signer' ? 'Signer' : 'Speaker'}
+              </button>
+              <button class="sf-btn" id="sf-btn-minimize" title="Minimize">─</button>
+            </div>
           </div>
         </div>
         <div class="sf-captions" id="sf-captions">
@@ -143,6 +158,10 @@
     `;
 
     document.body.appendChild(root);
+
+    // Initialize dragging
+    const handle = document.getElementById('sf-drag-handle');
+    initDraggable(root, handle);
 
     // Minimize button
     document.getElementById('sf-btn-minimize').addEventListener('click', () => {
@@ -178,6 +197,47 @@
     } else {
       dot.className = 'sf-status-dot';
       text.textContent = 'Connecting...';
+    }
+  }
+
+  function initDraggable(el, handle) {
+    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+    handle.onmousedown = dragMouseDown;
+
+    function dragMouseDown(e) {
+      e = e || window.event;
+      e.preventDefault();
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+      document.onmouseup = closeDragElement;
+      document.onmousemove = elementDrag;
+    }
+
+    function elementDrag(e) {
+      e = e || window.event;
+      e.preventDefault();
+      pos1 = pos3 - e.clientX;
+      pos2 = pos4 - e.clientY;
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+      
+      el.style.top = (el.offsetTop - pos2) + "px";
+      el.style.left = (el.offsetLeft - pos1) + "px";
+      el.style.bottom = 'auto';
+      el.style.transform = 'none';
+      el.style.margin = '0';
+    }
+
+    function closeDragElement() {
+      document.onmouseup = null;
+      document.onmousemove = null;
+      
+      chrome.storage.local.set({
+        overlayPos: {
+          top: el.style.top,
+          left: el.style.left
+        }
+      });
     }
   }
 

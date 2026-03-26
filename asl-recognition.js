@@ -12,6 +12,7 @@ const ASLRecognition = (() => {
     HOLD_FRAMES: 8,           // Frames to hold a letter before confirming
     SPACE_TIMEOUT_MS: 1500,   // Pause duration to insert space
     PREDICTION_INTERVAL_MS: 100, // How often to run prediction
+    MAX_TEXT_LENGTH: 40,          // Reset subtitle buffer after this many chars
     NUM_LANDMARKS: 21,        // MediaPipe hand landmarks count
     LANDMARK_DIMS: 3,         // x, y, z per landmark
   };
@@ -300,7 +301,7 @@ const ASLRecognition = (() => {
       if (letter === 'space' && confirmedWord.length > 0) {
         fullText += confirmedWord + ' ';
         confirmedWord = '';
-        emitCaption(fullText.trim(), false);
+        checkAndReset(false);
       }
       if (letter === 'del' && confirmedWord.length > 0) {
         confirmedWord = confirmedWord.slice(0, -1);
@@ -317,20 +318,33 @@ const ASLRecognition = (() => {
     if (now - lastLetterTime > CONFIG.SPACE_TIMEOUT_MS && confirmedWord.length > 0) {
       fullText += confirmedWord + ' ';
       confirmedWord = '';
+      checkAndReset(false);
     }
 
     if (letter === currentLetter) {
       letterCount++;
       if (letterCount === CONFIG.HOLD_FRAMES) {
-        // Letter confirmed!
         confirmedWord += letter;
         lastLetterTime = now;
-        emitCaption(fullText + confirmedWord, true);
-        letterCount = 0; // Reset to allow repeated same letter
+        letterCount = 0;
+        checkAndReset(true);
       }
     } else {
       currentLetter = letter;
       letterCount = 1;
+    }
+  }
+
+  // Check if text is too long and reset if needed
+  function checkAndReset(partial) {
+    const total = fullText + confirmedWord;
+    if (total.length >= CONFIG.MAX_TEXT_LENGTH) {
+      // Emit full text as final, then wipe everything
+      emitCaption(total.trim(), false);
+      fullText = '';
+      confirmedWord = '';
+    } else {
+      emitCaption(total, partial);
     }
   }
 

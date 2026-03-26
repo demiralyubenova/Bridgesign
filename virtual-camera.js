@@ -132,9 +132,15 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
 
-    const lines = wrapText(ctx, text, maxWidth);
+    // Truncate to single line — cut with ellipsis if too wide
+    let displayText = text;
+    while (ctx.measureText(displayText).width > maxWidth && displayText.length > 1) {
+      displayText = displayText.slice(0, -1);
+    }
+    if (displayText.length < text.length) displayText += '…';
+
     const lineHeight = fontSize * 1.3;
-    const blockHeight = lines.length * lineHeight + padding * 2;
+    const blockHeight = lineHeight + padding * 2;
     const blockY = h - margin - blockHeight;
 
     ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
@@ -151,9 +157,7 @@
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     ctx.shadowBlur = 4;
     ctx.fillStyle = '#ffffff';
-    lines.forEach((line, i) => {
-      ctx.fillText(line, w / 2, blockY + padding + (i + 1) * lineHeight);
-    });
+    ctx.fillText(displayText, w / 2, blockY + padding + lineHeight);
     ctx.shadowBlur = 0;
   }
 

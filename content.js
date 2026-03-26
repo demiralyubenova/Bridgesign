@@ -18,6 +18,11 @@
     maxCaptions: 8,
     minimized: false,
     transcript: [],     // All finalized captions for download
+    settings: {
+      fontSize: '16px',
+      opacity: 0.85,
+      textColor: '#ffffff',
+    }
   };
 
   // ==================== BACKGROUND PORT ====================
@@ -140,11 +145,35 @@
           <div class="sf-header-right">
             <div class="sf-controls">
               <button class="sf-btn" id="sf-btn-transcript" title="Download Transcript">📥</button>
+              <button class="sf-btn" id="sf-btn-settings" title="Settings">⚙️</button>
               <button class="sf-btn" id="sf-btn-role" title="Switch role">
                 ${state.role === 'signer' ? '🤟' : '🗣️'} ${state.role === 'signer' ? 'Signer' : 'Speaker'}
               </button>
               <button class="sf-btn" id="sf-btn-minimize" title="Minimize">─</button>
             </div>
+          </div>
+        </div>
+        <div class="sf-settings-panel" id="sf-settings-panel">
+          <div class="sf-settings-section">
+            <div class="sf-settings-label">Text Size</div>
+            <div class="sf-size-buttons">
+              <button class="sf-size-btn ${state.settings.fontSize === '14px' ? 'active' : ''}" data-size="14px">S</button>
+              <button class="sf-size-btn ${state.settings.fontSize === '16px' ? 'active' : ''}" data-size="16px">M</button>
+              <button class="sf-size-btn ${state.settings.fontSize === '20px' ? 'active' : ''}" data-size="20px">L</button>
+            </div>
+          </div>
+          <div class="sf-settings-section">
+            <div class="sf-settings-label">Caption Color</div>
+            <div class="sf-color-presets">
+              <button class="sf-color-btn ${state.settings.textColor === '#ffffff' ? 'active' : ''}" data-color="#ffffff" style="background: #ffffff;"></button>
+              <button class="sf-color-btn ${state.settings.textColor === '#fde047' ? 'active' : ''}" data-color="#fde047" style="background: #fde047;"></button>
+              <button class="sf-color-btn ${state.settings.textColor === '#22d3ee' ? 'active' : ''}" data-color="#22d3ee" style="background: #22d3ee;"></button>
+              <button class="sf-color-btn ${state.settings.textColor === '#4ade80' ? 'active' : ''}" data-color="#4ade80" style="background: #4ade80;"></button>
+            </div>
+          </div>
+          <div class="sf-settings-section">
+            <div class="sf-settings-label">Background Opacity</div>
+            <input type="range" class="sf-slider" id="sf-opacity-slider" min="0" max="1" step="0.05" value="${state.settings.opacity}">
           </div>
         </div>
         <div class="sf-captions" id="sf-captions">
@@ -176,6 +205,34 @@
     // Download transcript button
     document.getElementById('sf-btn-transcript').addEventListener('click', downloadTranscript);
 
+    // Settings Toggle
+    document.getElementById('sf-btn-settings').addEventListener('click', () => {
+      document.getElementById('sf-settings-panel').classList.toggle('active');
+    });
+
+    // Font Size Buttons
+    document.querySelectorAll('.sf-size-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const size = btn.dataset.size;
+        updateSettings({ fontSize: size });
+        document.querySelectorAll('.sf-size-btn').forEach(b => b.classList.toggle('active', b === btn));
+      });
+    });
+
+    // Color buttons
+    document.querySelectorAll('.sf-color-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const color = btn.dataset.color;
+        updateSettings({ textColor: color });
+        document.querySelectorAll('.sf-color-btn').forEach(b => b.classList.toggle('active', b === btn));
+      });
+    });
+
+    // Opacity Slider
+    document.getElementById('sf-opacity-slider').addEventListener('input', (e) => {
+      updateSettings({ opacity: e.target.value });
+    });
+
     // Role switch button
     document.getElementById('sf-btn-role').addEventListener('click', () => {
       // Stop current recognition
@@ -188,7 +245,38 @@
       showRoleSelector();
     });
 
+    // Load and Apply Initial Settings
+    chrome.storage.local.get(['sfSettings'], (result) => {
+      if (result.sfSettings) {
+        updateSettings(result.sfSettings, false);
+        // Sync UI
+        document.getElementById('sf-opacity-slider').value = state.settings.opacity;
+        document.querySelectorAll('.sf-size-btn').forEach(b => 
+          b.classList.toggle('active', b.dataset.size === state.settings.fontSize)
+        );
+        document.querySelectorAll('.sf-color-btn').forEach(b => 
+          b.classList.toggle('active', b.dataset.color === state.settings.textColor)
+        );
+      }
+    });
+
     updateStatusUI();
+  }
+
+  function updateSettings(newSettings, save = true) {
+    state.settings = { ...state.settings, ...newSettings };
+    
+    // Apply to CSS Variables
+    const root = document.getElementById('signflow-root');
+    if (root) {
+      root.style.setProperty('--sf-font-size', state.settings.fontSize);
+      root.style.setProperty('--sf-bg-opacity', state.settings.opacity);
+      root.style.setProperty('--sf-text-color', state.settings.textColor);
+    }
+
+    if (save) {
+      chrome.storage.local.set({ sfSettings: state.settings });
+    }
   }
 
   function updateStatusUI() {

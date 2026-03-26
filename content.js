@@ -293,6 +293,11 @@
           window.SignPlayer.enqueueManifest(msg.data.signPlan);
         }
         break;
+      case 'LOCAL_SIGN_PLAN':
+        if (window.SignPlayer) {
+          window.SignPlayer.enqueueManifest(msg.data.signPlan);
+        }
+        break;
       case 'PEER_JOINED': showNotification(`Peer joined as ${msg.data.role}`); break;
       case 'PEER_LEFT': showNotification('Peer disconnected'); break;
     }

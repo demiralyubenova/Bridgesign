@@ -278,6 +278,16 @@ async function requestAndSendSignPlan(tabId, data) {
     }
 
     const signPlan = await response.json();
+    sendToTab(tabId, {
+      type: 'LOCAL_SIGN_PLAN',
+      data: {
+        source: data.source,
+        text: data.text,
+        signPlan,
+        timestamp: Date.now(),
+      },
+    });
+
     if (session.ws && session.ws.readyState === WebSocket.OPEN) {
       session.ws.send(JSON.stringify({
         type: 'SIGN_PLAN',

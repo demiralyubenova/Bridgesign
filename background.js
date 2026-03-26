@@ -19,6 +19,9 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 let ws = null;
 let currentRoomId = null;
 let currentRole = null;
+let lastAppError = null;
+let latencyMs = 0;
+let pingInterval = null;
 let connectedPorts = new Map(); // tabId -> port
 let reconnectAttempts = 0;
 
@@ -57,6 +60,9 @@ function handleContentMessage(tabId, msg) {
     case 'LEAVE_ROOM':
       leaveRoom();
       break;
+    case 'EXTENSION_ERROR':
+      lastAppError = msg.message;
+      break;
     case 'CAPTION':
       sendCaption(msg.data);
       break;
@@ -93,6 +99,13 @@ function joinRoom(roomId, role) {
     reconnectAttempts = 0;
     ws.send(JSON.stringify({ type: 'JOIN', roomId, role: currentRole }));
     broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: true, roomId } });
+    
+    if (pingInterval) clearInterval(pingInterval);
+    pingInterval = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'PING', timestamp: Date.now() }));
+      }
+    }, 2000);
   };
 
   ws.onmessage = (event) => {
@@ -104,6 +117,8 @@ function joinRoom(roomId, role) {
         broadcastToTabs({ type: 'PEER_JOINED', data: msg.data });
       } else if (msg.type === 'PEER_LEFT') {
         broadcastToTabs({ type: 'PEER_LEFT', data: msg.data });
+      } else if (msg.type === 'PONG') {
+        latencyMs = Date.now() - msg.timestamp;
       }
     } catch (e) {
       console.error('[SignFlow] Failed to parse WS message:', e);
@@ -116,6 +131,8 @@ function joinRoom(roomId, role) {
   };
 
   ws.onclose = () => {
+    if (pingInterval) clearInterval(pingInterval);
+    latencyMs = 0;
     broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: false, roomId: currentRoomId } });
     
     if (!navigator.onLine) {
@@ -267,7 +284,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       connected: ws && ws.readyState === WebSocket.OPEN,
       roomId: currentRoomId,
       peers: connectedPorts.size,
+      error: lastAppError,
+      latency: latencyMs
     });
+    // Clear the error after viewing it once
+    lastAppError = null;
     return true;
   }
 });

@@ -6,8 +6,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveBtn = document.getElementById('btn-save-server');
   const plannerInput = document.getElementById('info-planner');
   const savePlannerBtn = document.getElementById('btn-save-planner');
-  const relayDefaultUrl = 'ws://172.20.10.8:3001';
-  const plannerDefaultUrl = 'http://172.20.10.8:8001';
+  const relayDefaultUrl = 'ws://localhost:3001';
+  const plannerDefaultUrl = 'http://localhost:8001';
 
   function normalizeRelayUrl(url) {
     return url === 'ws://localhost:3001' ? relayDefaultUrl : url;

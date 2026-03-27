@@ -56,7 +56,6 @@ async function startTabAudioCapture(streamId, serverUrl) {
   whisperServerUrl = (serverUrl || whisperServerUrl).replace(/\/$/, '');
 
   try {
-    // Get the actual MediaStream from the stream ID
     tabAudioStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         mandatory: {
@@ -84,38 +83,31 @@ async function startTabAudioCapture(streamId, serverUrl) {
 function startChunkedRecording() {
   if (!tabAudioStream) return;
 
-  let audioChunks = [];
+  let webmHeader = null;
 
   mediaRecorder = new MediaRecorder(tabAudioStream, {
     mimeType: 'audio/webm;codecs=opus',
   });
 
-  mediaRecorder.ondataavailable = (e) => {
+  mediaRecorder.ondataavailable = async (e) => {
     if (e.data.size > 0) {
-      audioChunks.push(e.data);
+      if (!webmHeader) {
+        webmHeader = e.data;
+        await sendToWhisper(new Blob([e.data], { type: 'audio/webm' }));
+      } else {
+        await sendToWhisper(new Blob([webmHeader, e.data], { type: 'audio/webm' }));
+      }
     }
   };
 
-  mediaRecorder.onstop = async () => {
-    if (audioChunks.length === 0) return;
-
-    const blob = new Blob(audioChunks, { type: 'audio/webm' });
-    audioChunks = [];
-
-    // Send to Whisper server
-    await sendToWhisper(blob);
-  };
-
-  // Record in chunks
   mediaRecorder.start();
 
+  if (recordingInterval) clearInterval(recordingInterval);
   recordingInterval = setInterval(() => {
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       mediaRecorder.stop();
-      // Restart immediately for the next chunk
       setTimeout(() => {
         if (tabAudioStream && tabAudioStream.active) {
-          audioChunks = [];
           mediaRecorder.start();
         }
       }, 50);
@@ -158,7 +150,7 @@ function stopTabAudioCapture() {
     clearInterval(recordingInterval);
     recordingInterval = null;
   }
-
+  
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop();
   }
@@ -173,13 +165,22 @@ function stopTabAudioCapture() {
 }
 
 // ==================== MESSAGE LISTENER ====================
+let isProcessingFrame = false;
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // MediaPipe frame processing (existing)
   if (msg.type === 'OFFSCREEN_PROCESS_FRAME') {
-    if (hands && msg.dataUrl) {
+    if (hands && msg.dataUrl && !isProcessingFrame) {
+      isProcessingFrame = true;
       const img = new Image();
-      img.onload = () => {
-        hands.send({ image: img }).catch(console.error);
+      img.onload = async () => {
+        try {
+          await hands.send({ image: img });
+        } catch (err) {
+          console.error('[BridgeSign Offscreen] hands.send() error:', err);
+        } finally {
+          isProcessingFrame = false;
+        }
       };
       img.src = msg.dataUrl;
     }

@@ -195,13 +195,13 @@
                 <h3>1. Start the relay</h3>
                 <pre><code>cd server
 npm start</code></pre>
-                <p>Default URL: <code>ws://172.20.10.8:3001</code></p>
+                <p>Default URL: <code>ws://localhost:3001</code></p>
             </div>
             <div class="install-card glass reveal-scroll delay-1">
                 <h3>2. Start the sign service</h3>
                 <pre><code>cd sign-service
 source .venv/bin/activate
-python -m uvicorn app:app --host 172.20.10.8 --port 8001</code></pre>
+python -m uvicorn app:app --host 0.0.0.0 --port 8001</code></pre>
                 <p>API endpoint: <code>POST /api/sign-plan</code></p>
             </div>
             <div class="install-card glass reveal-scroll delay-2">

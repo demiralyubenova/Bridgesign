@@ -4,7 +4,7 @@
 const { WebSocketServer } = require('ws');
 const http = require('http');
 
-const HOST = process.env.HOST || '172.20.10.8';
+const HOST = process.env.HOST || '0.0.0.0';
 const PORT = process.env.PORT || 3001;
 const MAX_ROOM_SIZE = parseInt(process.env.MAX_ROOM_SIZE || "2", 10);
 const MAX_MSG_SIZE = 4096;

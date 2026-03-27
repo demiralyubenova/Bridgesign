@@ -6,16 +6,13 @@
   "permissions": [
     "activeTab",
     "storage",
-    "offscreen",
-    "tabCapture"
+    "offscreen"
   ],
   "host_permissions": [
     "https://meet.google.com/*",
     "ws://localhost:3001/*",
     "http://localhost:8001/*",
-    "http://127.0.0.1:8001/*",
-    "http://localhost:8090/*",
-    "http://127.0.0.1:8090/*"
+    "http://127.0.0.1:8001/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -54,6 +51,6 @@
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' ws://localhost:3001 http://localhost:3001 http://localhost:8001 http://localhost:8090"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' ws://localhost:3001 http://localhost:3001 http://localhost:8001"
   }
 }

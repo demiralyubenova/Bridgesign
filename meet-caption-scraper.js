@@ -53,6 +53,9 @@ const MeetCaptionScraper = (() => {
     /\bpresenting\b/,
     /\bcaption(s)? turned (on|off)\b/,
     /\bsubtitle(s)? turned (on|off)\b/,
+    /участва в обаждането/i,
+    /напусна обаждането/i,
+    /се присъедини/i,
   ];
 
   const BRIDGESIGN_UI_SELECTORS = [

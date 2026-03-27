@@ -30,6 +30,7 @@
 
   let signerSpeechRec = null;
   let signerSpeechFallbackTimer = null;
+  let relayWarningTimer = null;
 
   function contentLog(message, details) {
     if (details === undefined) {
@@ -535,6 +536,13 @@
     }
   }
 
+  function clearRelayWarningTimer() {
+    if (relayWarningTimer) {
+      clearTimeout(relayWarningTimer);
+      relayWarningTimer = null;
+    }
+  }
+
   function stopSignerSpeechRecognitionFallback() {
     if (!signerSpeechRec) return;
     signerSpeechRec.onend = null;
@@ -568,6 +576,29 @@
       contentLog('No Meet captions detected yet; starting signer microphone fallback');
       startMeetCaptionScraping();
     }, 6000);
+  }
+
+  function scheduleRelayIsolationWarning() {
+    clearRelayWarningTimer();
+
+    relayWarningTimer = window.setTimeout(() => {
+      relayWarningTimer = null;
+
+      chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (status) => {
+        if (chrome.runtime.lastError || !status || !state.role || !state.roomId) {
+          return;
+        }
+
+        const relayUrl = String(status.relayUrl || '').toLowerCase();
+        const likelyLocalhostRelay =
+          relayUrl.includes('ws://localhost') ||
+          relayUrl.includes('ws://127.0.0.1');
+
+        if (status.connected && Number(status.peers || 0) === 0 && likelyLocalhostRelay) {
+          showNotification('No peer is reaching this relay. If speaker and signer are on different computers, use the same non-localhost Relay Server URL on both.');
+        }
+      });
+    }, 5000);
   }
 
   function startMeetCaptionCapture() {
@@ -820,6 +851,7 @@
 
     // Join room
     sendPortMessage({ type: 'JOIN_ROOM', roomId: getRoomId(), role: state.role });
+    scheduleRelayIsolationWarning();
 
     // Both roles burn subtitles into the camera feed
     document.dispatchEvent(new CustomEvent('bridgesign-vcam-activate'));
@@ -915,6 +947,7 @@
     state.transcripts = [];
     state.fullTranscript = [];
     state.recentLocalSpeech = [];
+    clearRelayWarningTimer();
   }
 
   function endSession({ notifyBackground = true } = {}) {

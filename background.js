@@ -605,6 +605,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       peers: session ? session.peerCount : 0,
       error: session ? session.lastError : null,
       latency: session ? session.latencyMs : 0,
+      relayUrl: RELAY_SERVER_URL,
       plannerUrl: SIGN_PLAN_SERVER_URL,
     });
     if (session) {

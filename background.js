@@ -437,8 +437,11 @@ async function setupOffscreenDocument() {
   } else {
     creatingOffscreen = chrome.offscreen.createDocument({
       url: chrome.runtime.getURL('offscreen.html'),
-      reasons: [chrome.offscreen.Reason.DOM_PARSER],
-      justification: 'Run MediaPipe ML model for ASL'
+      reasons: [
+        chrome.offscreen.Reason.DOM_PARSER,
+        chrome.offscreen.Reason.USER_MEDIA,
+      ],
+      justification: 'Run MediaPipe ML model for ASL and capture tab audio for transcription'
     });
     await creatingOffscreen;
     creatingOffscreen = null;
@@ -503,5 +506,61 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       session.lastError = null;
     }
     return true;
+  }
+
+  // ==================== TAB AUDIO CAPTURE ====================
+  if (msg.type === 'START_TAB_CAPTURE') {
+    const tabId = msg.tabId || (sender.tab && sender.tab.id);
+    if (!tabId) {
+      sendResponse({ success: false, error: 'No tab ID' });
+      return true;
+    }
+
+    setupOffscreenDocument()
+      .then(() => waitForOffscreenReady())
+      .then((ready) => {
+        if (!ready) throw new Error('Offscreen document not ready');
+        return new Promise((resolve, reject) => {
+          chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(streamId);
+            }
+          });
+        });
+      })
+      .then((streamId) => {
+        // Send stream ID to offscreen document to start recording
+        chrome.runtime.sendMessage({
+          type: 'OFFSCREEN_START_TAB_AUDIO',
+          streamId: streamId,
+          whisperUrl: msg.whisperUrl || 'http://localhost:8090',
+        });
+        activeSignerTabId = tabId;
+        sendResponse({ success: true });
+      })
+      .catch((err) => {
+        console.error('[BridgeSign] Tab capture failed:', err);
+        sendResponse({ success: false, error: err.message });
+      });
+    return true;
+  }
+
+  if (msg.type === 'STOP_TAB_CAPTURE') {
+    chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP_TAB_AUDIO' }).catch(() => {});
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // Forward Whisper transcriptions from offscreen to the signer's content script
+  if (msg.type === 'WHISPER_TRANSCRIPT') {
+    if (activeSignerTabId) {
+      chrome.tabs.sendMessage(activeSignerTabId, {
+        type: 'WHISPER_TRANSCRIPT',
+        data: { text: msg.text, segments: msg.segments },
+      }).catch(() => {});
+    }
+    return false;
   }
 });

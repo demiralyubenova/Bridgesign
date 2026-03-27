@@ -1,5 +1,6 @@
 [build]
-builder = "DOCKER"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "npm start"
@@ -10,3 +11,4 @@ restartPolicyType = "ON_FAILURE"
 [env]
 PORT = "3001"
 MAX_ROOM_SIZE = "2"
+NODE_ENV = "production"

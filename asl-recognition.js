@@ -265,6 +265,7 @@ const ASLRecognition = (() => {
   async function initializeCamera() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
         video: {
           width: { ideal: CONFIG.CAMERA_WIDTH },
           height: { ideal: CONFIG.CAMERA_HEIGHT },
@@ -378,6 +379,33 @@ const ASLRecognition = (() => {
     return hands
       .slice()
       .sort((a, b) => estimateHandSize(b) - estimateHandSize(a))[0];
+  }
+
+  function getBestMeetVideoElement() {
+    const videos = Array.from(document.querySelectorAll('video'));
+    let bestVideo = null;
+    let bestScore = -1;
+
+    for (const candidate of videos) {
+      if (!(candidate instanceof HTMLVideoElement)) continue;
+      if (candidate.readyState < 2) continue;
+
+      const rect = candidate.getBoundingClientRect();
+      const style = window.getComputedStyle(candidate);
+      if (rect.width < 120 || rect.height < 90) continue;
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || '1') === 0) continue;
+
+      const areaScore = rect.width * rect.height;
+      const cornerBias = rect.left > window.innerWidth * 0.55 && rect.top > window.innerHeight * 0.55 ? 50000 : 0;
+      const score = areaScore + cornerBias;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestVideo = candidate;
+      }
+    }
+
+    return bestVideo;
   }
 
   function estimateHandSize(landmarks) {
@@ -640,7 +668,7 @@ const ASLRecognition = (() => {
       const cameraOk = await initializeCamera();
       if (!cameraOk) {
         console.warn('[BridgeSign] Dedicated camera failed, attempting to hijack Meet video element');
-        const meetVideo = document.querySelector('video');
+        const meetVideo = getBestMeetVideoElement();
         if (meetVideo) {
           videoElement = meetVideo;
         } else {

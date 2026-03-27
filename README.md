@@ -9,7 +9,7 @@ Real-time sign language and speech support for Google Meet.
 - Speech-to-text captions remain the primary live channel.
 - Finalized speech phrases now generate an ASL playback manifest.
 - The receiver sees captions and an ASL playback panel at the same time.
-- Unknown words fall back to fingerspelling units instead of blocking the flow.
+- Unknown words now fall back to readable word cards, while names and acronyms can still be fingerspelled.
 
 ## Services
 
@@ -63,7 +63,7 @@ Defaults:
 
 ## ASL Media Assets
 
-The sign planner ships with phrase matching and fingerspelling fallback, but it does not include real ASL clip files yet. Add validated clips under:
+The sign planner ships with phrase matching, word-level mapping, and limited fingerspelling for names/acronyms, but it does not include real ASL clip files yet. Add validated clips under:
 
 ```text
 sign-service/media/asl/phrases/

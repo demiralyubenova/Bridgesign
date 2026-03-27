@@ -20,6 +20,7 @@ MEDIA_DIR = BASE_DIR / "media" / "asl"
 DEFAULT_FALLBACK_UNIT_MS = 1100
 DEFAULT_CLIP_UNIT_MS = 1800
 WORD_PATTERN = re.compile(r"[a-z0-9']+")
+SOURCE_WORD_PATTERN = re.compile(r"[A-Za-z0-9']+")
 
 
 STOPWORDS = {
@@ -48,6 +49,22 @@ URGENT_IDS = {
     "EMERGENCY",
     "CALL-911",
 }
+
+SPELL_INTENT_TOKENS = {
+    "initial",
+    "initials",
+    "letter",
+    "letters",
+    "spell",
+    "spelled",
+    "spelling",
+}
+
+NAME_INTRO_PATTERNS = (
+    ("my", "name", "is"),
+    ("this", "is"),
+    ("meet",),
+)
 
 
 EXACT_PHRASE_LIBRARY = {
@@ -238,6 +255,11 @@ DAY_LIBRARY = {
 
 DIGIT_LIBRARY = {str(value): f"NUM-{value}" for value in range(10)}
 MAX_NGRAM = max(len(key.split()) for key in EXACT_PHRASE_LIBRARY)
+TOKEN_ALIAS_LIBRARY = {
+    "ok": "OKAY",
+    "okay": "OKAY",
+    "thanks": "THANK-YOU",
+}
 
 
 @dataclass(frozen=True)
@@ -261,6 +283,12 @@ class Unit:
         return payload
 
 
+@dataclass(frozen=True)
+class SourceToken:
+    original: str
+    normalized: str
+
+
 def normalize_text(text: str) -> str:
     lowered = text.lower()
     lowered = re.sub(r"[\u2018\u2019]", "'", lowered)
@@ -269,16 +297,28 @@ def normalize_text(text: str) -> str:
     return lowered.strip()
 
 
-def split_clauses(text: str) -> list[str]:
-    normalized = normalize_text(text)
-    if not normalized:
-        return []
-    segments = re.split(r"[?!,.;:]+", normalized)
-    return [segment.strip() for segment in segments if segment.strip()]
+def split_clauses(text: str) -> list[tuple[str, str]]:
+    segments: list[tuple[str, str]] = []
+    for raw_segment in re.split(r"[?!,.;:]+", text):
+        original = re.sub(r"\s+", " ", raw_segment).strip()
+        normalized = normalize_text(raw_segment)
+        if normalized:
+            segments.append((original or normalized, normalized))
+    return segments
 
 
 def tokenize(segment: str) -> list[str]:
     return WORD_PATTERN.findall(segment)
+
+
+def source_tokens(segment: str) -> list[SourceToken]:
+    tokens: list[SourceToken] = []
+    for match in SOURCE_WORD_PATTERN.finditer(segment):
+        original = match.group(0)
+        normalized = normalize_text(original)
+        if normalized:
+            tokens.append(SourceToken(original=original, normalized=normalized))
+    return tokens
 
 
 def slugify(value: str) -> str:
@@ -310,6 +350,17 @@ def clip_unit(
     )
 
 
+def card_unit(text: str) -> Unit:
+    normalized = normalize_text(text)
+    slug = slugify(normalized) if normalized else "unknown-word"
+    return Unit(
+        type="card",
+        id=f"WORD-{slug.upper()}",
+        duration_ms=DEFAULT_FALLBACK_UNIT_MS,
+        text=text,
+    )
+
+
 def fingerspell_units(word: str, base_url: str) -> list[Unit]:
     units: list[Unit] = []
     for character in word.upper():
@@ -328,54 +379,139 @@ def fingerspell_units(word: str, base_url: str) -> list[Unit]:
     return units
 
 
-def token_to_units(token: str, base_url: str) -> list[Unit]:
+def known_token_unit(token: str, base_url: str, *, text: str) -> Unit | None:
     if token in DAY_LIBRARY:
-        return [clip_unit(base_url, DAY_LIBRARY[token], "days", text=token)]
+        return clip_unit(base_url, DAY_LIBRARY[token], "days", text=text)
     if token in DIGIT_LIBRARY:
-        return [clip_unit(base_url, DIGIT_LIBRARY[token], "numbers", text=token, duration_ms=900)]
+        return clip_unit(base_url, DIGIT_LIBRARY[token], "numbers", text=text, duration_ms=900)
     if token in UNIT_LIBRARY:
-        return [clip_unit(base_url, UNIT_LIBRARY[token], "phrases", text=token)]
-    if token in STOPWORDS:
-        return []
-    return fingerspell_units(token, base_url)
+        return clip_unit(base_url, UNIT_LIBRARY[token], "phrases", text=text)
+    return None
 
 
-def exact_phrase_units(segment: str, base_url: str) -> list[Unit] | None:
+def alias_token_unit(token: str, base_url: str, *, text: str) -> Unit | None:
+    unit_id = TOKEN_ALIAS_LIBRARY.get(token)
+    if not unit_id:
+        return None
+    return clip_unit(base_url, unit_id, "phrases", text=text)
+
+
+def _append_candidate(candidates: list[str], value: str) -> None:
+    if value and value not in candidates:
+        candidates.append(value)
+
+
+def morphology_candidates(token: str) -> list[str]:
+    candidates: list[str] = []
+
+    if token.endswith("ies") and len(token) > 3:
+        _append_candidate(candidates, token[:-3] + "y")
+    if token.endswith("es") and len(token) > 2:
+        _append_candidate(candidates, token[:-2])
+    if token.endswith("s") and len(token) > 1:
+        _append_candidate(candidates, token[:-1])
+
+    if token.endswith("ing") and len(token) > 4:
+        stem = token[:-3]
+        _append_candidate(candidates, stem)
+        if len(stem) > 1 and stem[-1] == stem[-2]:
+            _append_candidate(candidates, stem[:-1])
+        _append_candidate(candidates, f"{stem}e")
+
+    if token.endswith("ed") and len(token) > 3:
+        stem = token[:-2]
+        _append_candidate(candidates, stem)
+        if len(stem) > 1 and stem[-1] == stem[-2]:
+            _append_candidate(candidates, stem[:-1])
+        _append_candidate(candidates, f"{stem}e")
+
+    if token.endswith("er") and len(token) > 3:
+        _append_candidate(candidates, token[:-2])
+
+    return candidates
+
+
+def morphology_token_unit(token: str, base_url: str, *, text: str) -> Unit | None:
+    for candidate in morphology_candidates(token):
+        unit = known_token_unit(candidate, base_url, text=text)
+        if unit:
+            return unit
+        unit = alias_token_unit(candidate, base_url, text=text)
+        if unit:
+            return unit
+    return None
+
+
+def is_short_acronym(token: SourceToken) -> bool:
+    letters_only = re.sub(r"[^A-Za-z]", "", token.original)
+    return 2 <= len(letters_only) <= 5 and letters_only.isupper()
+
+
+def has_spell_intent(tokens: list[SourceToken], index: int) -> bool:
+    return any(token.normalized in SPELL_INTENT_TOKENS for token in tokens[:index])
+
+
+def looks_like_name(token: SourceToken) -> bool:
+    letters_only = re.sub(r"[^A-Za-z]", "", token.original)
+    if len(letters_only) < 2 or not letters_only.isalpha():
+        return False
+    if token.original.isupper():
+        return False
+    return token.original[:1].isupper()
+
+
+def has_name_intro(tokens: list[SourceToken], end_index: int) -> bool:
+    for pattern in NAME_INTRO_PATTERNS:
+        start_index = end_index - len(pattern)
+        if start_index < 0:
+            continue
+        if tuple(token.normalized for token in tokens[start_index:end_index]) == pattern:
+            return True
+    return False
+
+
+def follows_name_intro(tokens: list[SourceToken], index: int) -> bool:
+    if not looks_like_name(tokens[index]):
+        return False
+
+    for start_index in range(index + 1):
+        if not has_name_intro(tokens, start_index):
+            continue
+        if all(looks_like_name(token) for token in tokens[start_index:index + 1]):
+            return True
+    return False
+
+
+def should_fingerspell_token(tokens: list[SourceToken], index: int) -> bool:
+    token = tokens[index]
+    return is_short_acronym(token) or has_spell_intent(tokens, index) or follows_name_intro(tokens, index)
+
+
+def token_to_units(tokens: list[SourceToken], index: int, base_url: str) -> list[Unit]:
+    token = tokens[index]
+    return fingerspell_units(token.original, base_url)
+
+
+def exact_phrase_units(segment: str, base_url: str, *, text: str | None = None) -> list[Unit] | None:
     unit_id = EXACT_PHRASE_LIBRARY.get(segment)
     if not unit_id:
         return None
-    return [clip_unit(base_url, unit_id, "phrases", text=segment)]
+    return [clip_unit(base_url, unit_id, "phrases", text=text or segment)]
 
 
-def compose_tokens(tokens: list[str], base_url: str) -> list[Unit]:
+def compose_tokens(tokens: list[SourceToken], base_url: str) -> list[Unit]:
     if not tokens:
         return []
 
     units: list[Unit] = []
-    cursor = 0
-    while cursor < len(tokens):
-        matched = False
-        remaining = len(tokens) - cursor
-        for window in range(min(MAX_NGRAM, remaining), 0, -1):
-            candidate = " ".join(tokens[cursor:cursor + window])
-            exact_units = exact_phrase_units(candidate, base_url)
-            if exact_units:
-                units.extend(exact_units)
-                cursor += window
-                matched = True
-                break
-
-        if matched:
-            continue
-
-        units.extend(token_to_units(tokens[cursor], base_url))
-        cursor += 1
+    for index in range(len(tokens)):
+        units.extend(token_to_units(tokens, index, base_url))
 
     return units
 
 
-def compose_segment(segment: str, base_url: str) -> list[Unit]:
-    return compose_tokens(tokenize(segment), base_url)
+def compose_segment(segment: str, base_url: str, tokens: list[SourceToken] | None = None) -> list[Unit]:
+    return compose_tokens(tokens or source_tokens(segment), base_url)
 
 
 def detect_mode(units: Iterable[Unit]) -> str:
@@ -391,16 +527,34 @@ def is_urgent(units: Iterable[Unit]) -> bool:
     return any(unit.id in URGENT_IDS for unit in units)
 
 
+def text_is_urgent(text: str) -> bool:
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+
+    if normalized in EXACT_PHRASE_LIBRARY:
+        return EXACT_PHRASE_LIBRARY[normalized] in URGENT_IDS
+
+    tokens = tokenize(normalized)
+    if "911" in tokens and "call" in tokens:
+        return True
+
+    token_unit_ids = {
+        DAY_LIBRARY.get(token)
+        or DIGIT_LIBRARY.get(token)
+        or UNIT_LIBRARY.get(token)
+        or TOKEN_ALIAS_LIBRARY.get(token)
+        for token in tokens
+    }
+    return any(unit_id in URGENT_IDS for unit_id in token_unit_ids if unit_id)
+
+
 def fallback_plan(text: str, base_url: str) -> tuple[list[Unit], dict[str, object]]:
     segments = split_clauses(text)
     units: list[Unit] = []
 
-    for segment in segments:
-        exact_units = exact_phrase_units(segment, base_url)
-        if exact_units:
-            units.extend(exact_units)
-            continue
-        units.extend(compose_segment(segment, base_url))
+    for original_segment, _normalized_segment in segments:
+        units.extend(compose_segment(original_segment, base_url))
 
     metadata = {
         "provider": "fallback",
@@ -440,18 +594,25 @@ def _slt_tokens_for_text(text: str) -> list[str]:
     return collected
 
 
+def slt_source_tokens(text: str) -> list[SourceToken]:
+    source_aligned_tokens = source_tokens(text)
+    slt_tokens = _slt_tokens_for_text(text)
+
+    if len(slt_tokens) != len(source_aligned_tokens):
+        return source_aligned_tokens
+
+    return [
+        SourceToken(original=source_token.original, normalized=slt_token)
+        for source_token, slt_token in zip(source_aligned_tokens, slt_tokens)
+    ]
+
+
 def slt_plan(text: str, base_url: str) -> tuple[list[Unit], dict[str, object]]:
     segments = split_clauses(text)
     units: list[Unit] = []
 
-    for segment in segments:
-        exact_units = exact_phrase_units(segment, base_url)
-        if exact_units:
-            units.extend(exact_units)
-            continue
-
-        tokens = _slt_tokens_for_text(segment)
-        units.extend(compose_tokens(tokens, base_url))
+    for original_segment, _normalized_segment in segments:
+        units.extend(compose_segment(original_segment, base_url, tokens=slt_source_tokens(original_segment)))
 
     metadata = {
         "provider": "sign-language-translator",
@@ -511,7 +672,10 @@ def build_sign_plan(text: str, base_url: str) -> dict[str, object]:
         "text": text.strip(),
         "sign_language": "ASL",
         "mode": detect_mode(units),
-        "priority": "urgent" if is_urgent(units) else "normal",
+        "priority": "urgent" if is_urgent(units) or text_is_urgent(text) else "normal",
+        "fallback_strategy": "word-first-name-fingerspell",
+        "fingerspell_count": sum(1 for unit in units if unit.id.startswith("FS-")),
+        "card_count": sum(1 for unit in units if unit.type == "card" and unit.id != "NO-SIGN-PLAN"),
         "units": [unit.as_dict() for unit in units],
         **metadata,
     }

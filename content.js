@@ -463,9 +463,12 @@
     document.dispatchEvent(new CustomEvent('bridgesign-vcam-activate'));
 
     // Recognition
+    stopSpeechRecognition();
     if (state.role === 'speaker') {
+      document.dispatchEvent(new CustomEvent('bridgesign-vcam-activate'));
       startSpeechRecognition();
     } else {
+      document.dispatchEvent(new CustomEvent('bridgesign-vcam-stop'));
       await startASLRecognition();
 
       // Start scraping Meet's built-in CC so the signer can read speech
@@ -598,10 +601,13 @@
   // [Keeping existing speech recognition and ASL logic but calling state.toolbar.addTranscript]
   
   let speechRec = null;
+  const SPEECH_RECOGNITION_LANG = 'en-US';
   function startSpeechRecognition(auto = false) {
+    if (state.role !== 'speaker') return;
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return;
     speechRec = new SpeechRecognition();
+    speechRec.lang = SPEECH_RECOGNITION_LANG;
     speechRec.continuous = true;
     speechRec.interimResults = true;
     speechRec.onresult = (e) => {

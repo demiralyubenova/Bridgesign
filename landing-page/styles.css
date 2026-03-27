@@ -232,6 +232,29 @@ h1, h2, h3, h4 {
     gap: 1.5rem;
 }
 
+.hero-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 2rem;
+}
+
+.stat {
+    padding: 1rem 1.1rem;
+    border-radius: 18px;
+}
+
+.stat strong {
+    display: block;
+    font-size: 0.95rem;
+    margin-bottom: 0.35rem;
+}
+
+.stat span {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
 /* Hero Visual / Mockup */
 .hero-visual {
     flex: 1;
@@ -291,6 +314,55 @@ h1, h2, h3, h4 {
 .sign-icon {
     font-size: 3rem;
     opacity: 0.8;
+}
+
+.speaker-overlay {
+    width: 82%;
+    background: rgba(15, 23, 42, 0.88);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 0.85rem 1rem;
+    box-shadow: 0 16px 34px rgba(0, 0, 0, 0.25);
+}
+
+.overlay-tag {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent-blue);
+    margin-bottom: 0.35rem;
+}
+
+.overlay-text {
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.sign-stage {
+    width: 82%;
+    min-height: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    border-radius: 18px;
+    background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.18), transparent 40%),
+        linear-gradient(145deg, rgba(12, 18, 30, 0.96), rgba(24, 24, 28, 0.96));
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+.sign-stage-emoji {
+    font-size: 3.6rem;
+}
+
+.sign-stage-label {
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-align: center;
+    padding: 0 1rem;
 }
 
 /* Animations */
@@ -399,6 +471,85 @@ h1, h2, h3, h4 {
     font-size: 0.95rem;
 }
 
+.architecture,
+.install-section {
+    padding: 100px 5%;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.architecture-grid,
+.install-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+}
+
+.architecture-card,
+.install-card {
+    padding: 2rem;
+    border-radius: 22px;
+}
+
+.architecture-kicker {
+    display: inline-block;
+    margin-bottom: 1rem;
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--accent-blue);
+}
+
+.architecture-card h3,
+.install-card h3 {
+    font-size: 1.35rem;
+    margin-bottom: 0.85rem;
+}
+
+.architecture-card p,
+.install-card p {
+    color: var(--text-muted);
+}
+
+.architecture-list {
+    list-style: none;
+    margin-top: 1rem;
+    display: grid;
+    gap: 0.8rem;
+}
+
+.architecture-list li {
+    position: relative;
+    padding-left: 1rem;
+    color: var(--text-muted);
+}
+
+.architecture-list li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.7em;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+}
+
+.install-card pre {
+    margin: 1rem 0;
+    padding: 1rem 1.1rem;
+    border-radius: 16px;
+    background: rgba(2, 6, 23, 0.85);
+    border: 1px solid rgba(255,255,255,0.08);
+    overflow-x: auto;
+}
+
+.install-card code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.92rem;
+    color: #dbeafe;
+}
+
 /* Steps Section */
 .steps-section {
     padding: 50px 5%;
@@ -505,6 +656,10 @@ h1, h2, h3, h4 {
     .cta-group {
         justify-content: center;
     }
+
+    .hero-stats {
+        grid-template-columns: 1fr;
+    }
     
     .steps {
         flex-direction: column;
@@ -513,5 +668,32 @@ h1, h2, h3, h4 {
     
     .step-line {
         display: none;
+    }
+}
+
+@media (max-width: 640px) {
+    .navbar {
+        padding: 0.9rem 1.1rem;
+        width: calc(100% - 24px);
+    }
+
+    .nav-links a:not(.btn) {
+        display: none;
+    }
+
+    .hero h1 {
+        font-size: 2.8rem;
+    }
+
+    .caption-bar {
+        position: static;
+        transform: none;
+        width: 100%;
+        margin-top: 1rem;
+    }
+
+    .steps-container,
+    .footer-cta {
+        padding: 2rem 1.25rem;
     }
 }

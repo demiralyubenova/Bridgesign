@@ -3,51 +3,51 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BridgeSign | Real-time ASL Translation for Google Meet</title>
-    <meta name="description" content="BridgeSign is a Chrome extension that enables seamless communication in Google Meet through real-time ASL recognition and speech-to-text captions.">
+    <title>BridgeSign | Captions for Speakers, ASL Playback for Sign-First Users</title>
+    <meta name="description" content="BridgeSign is a Google Meet extension with a room relay server and a sign-planner service. Speakers get live subtitles on camera, and ASL-first participants get phrase-based ASL playback with fingerspelling fallback.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- Dynamic Background Elements -->
     <div class="glow-orb orb-1"></div>
     <div class="glow-orb orb-2"></div>
     <div class="glow-orb orb-3"></div>
-    
-    <!-- Navbar -->
+
     <nav class="navbar glass">
         <div class="logo">
             <span class="icon">🤟</span> BridgeSign
         </div>
         <div class="nav-links">
             <a href="#features">Features</a>
-            <a href="#how-it-works">How it Works</a>
-            <a href="https://github.com/demiralyubenova/Bridgesign" target="_blank" class="btn btn-outline">GitHub</a>
+            <a href="#architecture">Architecture</a>
+            <a href="#install">Install</a>
+            <a href="https://github.com/demiralyubenova/Bridgesign" target="_blank" rel="noreferrer" class="btn btn-outline">GitHub</a>
         </div>
     </nav>
 
-    <!-- Hero Section -->
     <header class="hero">
         <div class="hero-content fade-in">
-            <div class="badge">Chrome Extension (Manifest V3)</div>
-            <h1>Bridge the Gap in <br><span class="gradient-text">Video Calls</span></h1>
-            <p class="subtitle">Real-time sign language ↔ speech translation for Google Meet. Seamlessly connect deaf, hard-of-hearing, and hearing participants.</p>
+            <div class="badge">Chrome Extension + WebSocket Relay + FastAPI Sign Planner</div>
+            <h1>Live captions for the speaker.<br><span class="gradient-text">ASL playback for the signer.</span></h1>
+            <p class="subtitle">BridgeSign now follows a hybrid flow built for Google Meet: speech becomes real-time captions immediately, finalized speech is sent through a room relay, and a dedicated sign planner returns a known ASL phrase or fingerspelling fallback for the receiving ASL user.</p>
             <div class="cta-group">
-                <a href="#install" class="btn btn-primary">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="chrome-icon">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
-                        <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="2"/>
-                        <path d="M21.17 8H12M3.95 6.06L8.54 14M10.88 21.94L15.46 14" stroke="currentColor" stroke-width="2"/>
-                    </svg>
-                    Install on Chrome
-                </a>
-                <a href="#demo" class="btn btn-secondary">Watch Demo</a>
+                <a href="#install" class="btn btn-primary">Run Locally</a>
+                <a href="#architecture" class="btn btn-secondary">See the Flow</a>
+            </div>
+            <div class="hero-stats">
+                <div class="stat glass">
+                    <strong>Relay server</strong>
+                    <span>Room-based WebSocket sync for captions and sign plans</span>
+                </div>
+                <div class="stat glass">
+                    <strong>Sign planner</strong>
+                    <span>Phrase-first ASL planning with fingerspelling fallback</span>
+                </div>
             </div>
         </div>
-        
-        <!-- Mock UI Showcase -->
+
         <div class="hero-visual float-anim">
             <div class="meet-mockup glass">
                 <div class="meet-header">
@@ -57,85 +57,163 @@
                 </div>
                 <div class="meet-grid">
                     <div class="video-cell user1">
-                        <div class="label">You (Signer)</div>
-                        <div class="sign-icon">🤟</div>
+                        <div class="label">Speaker</div>
+                        <div class="speaker-overlay">
+                            <div class="overlay-tag">On-camera subtitles</div>
+                            <div class="overlay-text">Can you repeat that?</div>
+                        </div>
                     </div>
                     <div class="video-cell user2">
-                        <div class="label">Alex (Speaker)</div>
-                        <div class="wave">
-                            <span></span><span></span><span></span>
+                        <div class="label">ASL Signer</div>
+                        <div class="sign-stage">
+                            <div class="sign-stage-emoji">🔁❓</div>
+                            <div class="sign-stage-label">CAN-YOU-REPEAT-THAT</div>
                         </div>
                     </div>
                 </div>
-                <!-- Extension Caption Bar Mock -->
                 <div class="caption-bar glass-intense">
-                    <div class="caption-tag">Alex</div>
-                    <div class="caption-text typing-effect">Hi there! How are you doing today?</div>
+                    <div class="caption-tag">Planner output</div>
+                    <div class="caption-text typing-effect">Known phrase -> whole sign. Unknown word -> fingerspelling.</div>
                 </div>
             </div>
         </div>
     </header>
 
-    <!-- Features Section -->
     <section id="features" class="features">
         <div class="section-title fade-in-scroll">
-            <h2>Powered by Modern Tech</h2>
-            <p>Built for privacy, speed, and accuracy right in your browser.</p>
+            <h2>What The Current Build Actually Does</h2>
+            <p>The product is no longer just “sign recognition in the browser”. It is a split system with clear roles and fallbacks.</p>
         </div>
-        
+
         <div class="feature-grid">
             <div class="feature-card glass hover-lift reveal-scroll">
-                <div class="feature-icon icon-purple">🤟</div>
-                <h3>ASL → Text</h3>
-                <p>Real-time fingerspelling recognition via webcam using MediaPipe and TensorFlow.js running 100% locally.</p>
+                <div class="feature-icon icon-blue">🗣️</div>
+                <h3>Speaker-Side Subtitles</h3>
+                <p>The speaker uses browser speech recognition. Their words are shown as live subtitles in Meet and sent as finalized transcript chunks for downstream ASL planning.</p>
             </div>
             <div class="feature-card glass hover-lift reveal-scroll delay-1">
-                <div class="feature-icon icon-blue">🗣️</div>
-                <h3>Speech → Text</h3>
-                <p>Lightning-fast speech recognition utilizing the native Web Speech API to transcribe hearing participants.</p>
+                <div class="feature-icon icon-pink">🔄</div>
+                <h3>Room Relay Sync</h3>
+                <p>The Node relay server groups participants by room, relays captions between peers, and broadcasts sign-plan payloads so the right participant sees the right output.</p>
             </div>
             <div class="feature-card glass hover-lift reveal-scroll delay-2">
-                <div class="feature-icon icon-pink">🔄</div>
-                <h3>Two-Way Sync</h3>
-                <p>A lightweight WebSocket relay server ensures captions sync seamlessly between all peers in a call instantly.</p>
+                <div class="feature-icon icon-purple">🤟</div>
+                <h3>ASL Planner With Fallback</h3>
+                <p>The FastAPI sign service tries known ASL phrases first, then approved sign units, then fingerspelling. That means “Hello” becomes a whole sign while names like “Maya” become M-A-Y-A.</p>
             </div>
         </div>
     </section>
 
-    <!-- How it works -->
-    <section id="how-it-works" class="steps-section">
+    <section id="architecture" class="architecture">
+        <div class="section-title fade-in-scroll">
+            <h2>Runtime Architecture</h2>
+            <p>Three pieces work together during a call.</p>
+        </div>
+
+        <div class="architecture-grid">
+            <article class="architecture-card glass reveal-scroll">
+                <div class="architecture-kicker">1. Meet Extension</div>
+                <h3>Role-based UI in the browser</h3>
+                <p>The extension injects the Meet overlay, lets users pick Speaker or ASL Signer, shows transcript history, and mounts the ASL player only on the receiving ASL side.</p>
+                <ul class="architecture-list">
+                    <li>Speaker: microphone speech to live transcript</li>
+                    <li>Signer: transcript feed plus ASL playback panel</li>
+                    <li>Single-device preview supported for local testing</li>
+                </ul>
+            </article>
+
+            <article class="architecture-card glass reveal-scroll delay-1">
+                <div class="architecture-kicker">2. Relay Server</div>
+                <h3>Room-based WebSocket transport</h3>
+                <p>The `server/` service handles `JOIN`, `CAPTION`, `SIGN_PLAN`, `PEER_JOINED`, and `PEER_LEFT` events. It keeps each Meet room isolated and forwards live updates to the other participant.</p>
+                <ul class="architecture-list">
+                    <li>HTTP health endpoint</li>
+                    <li>Rate limiting and room size guardrails</li>
+                    <li>Peer-to-peer sync without storing conversations</li>
+                </ul>
+            </article>
+
+            <article class="architecture-card glass reveal-scroll delay-2">
+                <div class="architecture-kicker">3. Sign Service</div>
+                <h3>Phrase planning over raw translation</h3>
+                <p>The `sign-service/` API accepts finalized text at `POST /api/sign-plan` and returns a sign playback manifest. It exposes provider metadata, checks known ASL phrase mappings, and falls back to fingerspelling for unknown terms.</p>
+                <ul class="architecture-list">
+                    <li>`HELLO` and other known phrases resolve as full signs</li>
+                    <li>Single unknown words can fingerspell letter by letter</li>
+                    <li>Optional `sign-language-translator` integration is supported</li>
+                </ul>
+            </article>
+        </div>
+    </section>
+
+    <section class="steps-section">
         <div class="glass steps-container fade-in-scroll">
-            <h2>Get Started in Seconds</h2>
+            <h2>Call Flow</h2>
             <div class="steps">
                 <div class="step">
                     <div class="step-num">1</div>
-                    <h4>Install</h4>
-                    <p>Load the unpacked extension into Chrome Developer mode.</p>
+                    <h4>Speaker talks</h4>
+                    <p>Speech recognition produces interim and final captions in Meet.</p>
                 </div>
                 <div class="step-line"></div>
                 <div class="step">
                     <div class="step-num">2</div>
-                    <h4>Join Meet</h4>
-                    <p>Open a Google Meet call and select your role (Signer or Speaker).</p>
+                    <h4>Relay forwards</h4>
+                    <p>The room server sends transcript updates and sign-plan events to the other participant.</p>
                 </div>
                 <div class="step-line"></div>
                 <div class="step">
                     <div class="step-num">3</div>
-                    <h4>Communicate</h4>
-                    <p>The premium glass overlay will display real-time captions.</p>
+                    <h4>Planner resolves</h4>
+                    <p>The sign service returns a whole sign when it knows the phrase and fingerspelling when it does not.</p>
+                </div>
+                <div class="step-line"></div>
+                <div class="step">
+                    <div class="step-num">4</div>
+                    <h4>Signer receives</h4>
+                    <p>The ASL-side participant sees the ASL playback panel while the speaker keeps on-camera subtitles.</p>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Footer CTA -->
+    <section id="install" class="install-section">
+        <div class="section-title fade-in-scroll">
+            <h2>Run The Stack</h2>
+            <p>The landing page now matches the actual local setup required by the current MVP.</p>
+        </div>
+
+        <div class="install-grid">
+            <div class="install-card glass reveal-scroll">
+                <h3>1. Start the relay</h3>
+                <pre><code>cd server
+npm start</code></pre>
+                <p>Default URL: <code>ws://localhost:3001</code></p>
+            </div>
+            <div class="install-card glass reveal-scroll delay-1">
+                <h3>2. Start the sign service</h3>
+                <pre><code>cd sign-service
+source .venv/bin/activate
+python -m uvicorn app:app --host 0.0.0.0 --port 8001</code></pre>
+                <p>API endpoint: <code>POST /api/sign-plan</code></p>
+            </div>
+            <div class="install-card glass reveal-scroll delay-2">
+                <h3>3. Load the extension</h3>
+                <pre><code>chrome://extensions
+Load unpacked
+Select the repo root</code></pre>
+                <p>Set relay and planner URLs in the popup, then join the same Meet room on both sides.</p>
+            </div>
+        </div>
+    </section>
+
     <section class="footer-cta glass">
-        <h2>Ready to break the communication barrier?</h2>
-        <a href="#install" class="btn btn-primary pulse-btn">Get BridgeSign Now</a>
+        <h2>Built around the actual MVP: captions first, sign playback second, fallback always available.</h2>
+        <a href="#install" class="btn btn-primary pulse-btn">Launch The Local Demo</a>
     </section>
 
     <footer class="main-footer">
-        <p>Built with ❤️ for accessible communication. Open Source under MIT License.</p>
+        <p>BridgeSign is an accessibility prototype for Google Meet built around a Chrome extension, a WebSocket relay server, and a FastAPI ASL sign planner.</p>
     </footer>
 
     <script src="script.js"></script>

@@ -38,10 +38,10 @@ document.addEventListener("DOMContentLoaded", () => {
     // Simple interaction for the hero mockup
     const captionBar = document.querySelector('.caption-bar .caption-text');
     const texts = [
-        "Hi there! How are you doing today?",
-        "Can you see my signs clearly?",
-        "Yes, the overlay looks incredible!",
-        "Real-time translation activated. 🤟"
+        "Known phrase -> whole sign playback",
+        "Unknown name -> fingerspelling fallback",
+        "Relay server syncs captions between both sides",
+        "Speaker gets subtitles, signer gets ASL playback"
     ];
     let arrIndex = 0;
 

@@ -4,6 +4,14 @@
 const SignPlayer = (() => {
   'use strict';
 
+  function playerLog(message, details) {
+    if (details === undefined) {
+      console.log(`[BridgeSign][player] ${message}`);
+      return;
+    }
+    console.log(`[BridgeSign][player] ${message}`, details);
+  }
+
   const ASL_ALPHABET_CHART_URL = typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL
     ? chrome.runtime.getURL('assets/asl-alphabet-chart.png')
     : '';
@@ -76,13 +84,14 @@ const SignPlayer = (() => {
   }
 
   function mount(refs) {
+    playerLog('Mounting SignPlayer');
     state.queue = [];
     stopCurrentPlayback();
     state.lastCompletedManifest = null;
     state.refs = refs;
     state.mounted = true;
     ensureAslChartAvailability();
-    setVisible(false);
+    setVisible(true);
     updateStatus('Waiting for ASL plan');
     updateQueue([]);
     updateReplayButton();
@@ -92,11 +101,14 @@ const SignPlayer = (() => {
   }
 
   function enqueueManifest(manifest) {
+    playerLog('enqueueManifest called', manifest);
     if (!manifest || !Array.isArray(manifest.units) || !manifest.units.length) {
+      playerLog('Ignoring empty manifest');
       return;
     }
 
     if (!hasPlayableUnits(manifest)) {
+      playerLog('Manifest has no playable units', manifest);
       showUnavailableManifest(manifest);
       return;
     }
@@ -112,11 +124,13 @@ const SignPlayer = (() => {
   }
 
   function replayLast() {
+    playerLog('Replaying last manifest', state.lastCompletedManifest);
     if (!state.lastCompletedManifest) return;
     enqueueManifest(JSON.parse(JSON.stringify(state.lastCompletedManifest)));
   }
 
   function reset() {
+    playerLog('Resetting SignPlayer');
     state.queue = [];
     stopCurrentPlayback();
     state.lastCompletedManifest = null;
@@ -126,7 +140,7 @@ const SignPlayer = (() => {
     if (state.refs && state.refs.label) {
       state.refs.label.textContent = '-';
     }
-    setVisible(false);
+    setVisible(true);
   }
 
   function updateStatus(message) {
@@ -169,7 +183,14 @@ const SignPlayer = (() => {
   }
 
   async function playManifest(manifest, interrupt = false) {
+    playerLog('Starting manifest playback', {
+      interrupt,
+      text: manifest && manifest.text,
+      mode: manifest && manifest.mode,
+      units: manifest && manifest.units ? manifest.units.map((unit) => unit.id) : [],
+    });
     if (!state.mounted || !manifest || !Array.isArray(manifest.units) || !manifest.units.length) {
+      playerLog('Aborting playback because player is not mounted or manifest is invalid');
       return;
     }
 
@@ -198,6 +219,7 @@ const SignPlayer = (() => {
 
     for (const unit of manifest.units) {
       if (token !== state.currentPlaybackToken) {
+        playerLog('Playback token changed, aborting remaining units');
         return;
       }
       await playUnit(unit, token);
@@ -219,10 +241,12 @@ const SignPlayer = (() => {
 
     updateQueue([]);
     updateStatus('ASL plan complete');
+    playerLog('Manifest playback complete', { text: manifest.text });
   }
 
   async function playUnit(unit, token) {
     return new Promise(async (resolve) => {
+      playerLog('Playing unit', unit);
       const finish = () => {
         if (token !== state.currentPlaybackToken) {
           resolve();
@@ -255,6 +279,7 @@ const SignPlayer = (() => {
 
         const resolvedUrl = await resolveClipUrl(unit.url);
         if (!resolvedUrl) {
+          playerLog('Clip URL could not be resolved, showing fallback card', unit);
           showFallbackCard(unit);
           scheduleFinish(unit.duration_ms, finish);
           return;
@@ -262,12 +287,14 @@ const SignPlayer = (() => {
 
         state.refs.video.src = resolvedUrl;
         state.refs.video.play().catch(() => {
+          playerLog('Video playback failed, switching to fallback card', unit);
           showFallbackCard(unit);
           scheduleFinish(unit.duration_ms, finish);
         });
         return;
       }
 
+      playerLog('No video URL present, showing fallback card', unit);
       showFallbackCard(unit);
       scheduleFinish(unit.duration_ms, finish);
     });
@@ -306,6 +333,7 @@ const SignPlayer = (() => {
   }
 
   function showUnavailableManifest(manifest) {
+    playerLog('Showing unavailable manifest', manifest);
     stopCurrentPlayback();
     state.queue = [];
     state.currentManifest = null;
@@ -375,10 +403,12 @@ const SignPlayer = (() => {
   async function resolveClipUrl(url) {
     if (!url) return null;
     if (state.clipCache.has(url)) {
+      playerLog('Using cached clip URL', { url });
       return state.clipCache.get(url);
     }
 
     try {
+      playerLog('Fetching clip URL', { url });
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Clip responded with ${response.status}`);
@@ -386,8 +416,10 @@ const SignPlayer = (() => {
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
       state.clipCache.set(url, objectUrl);
+      playerLog('Clip fetched successfully', { url, objectUrl });
       return objectUrl;
     } catch (error) {
+      playerLog('Clip fetch failed', { url, error: error && error.message ? error.message : error });
       console.warn('[SignFlow] Failed to load sign clip:', error && error.message ? error.message : error);
       return null;
     }
@@ -401,6 +433,7 @@ const SignPlayer = (() => {
   }
 
   function stopCurrentPlayback() {
+    playerLog('Stopping current playback');
     state.currentPlaybackToken += 1;
 
     if (state.currentTimeoutId) {

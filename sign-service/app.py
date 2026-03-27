@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from planner import BASE_DIR, SLT_IMPORT_ERROR, build_sign_plan, slt
+from planner import BASE_DIR, SIGNS_DATA_DIR, SLT_IMPORT_ERROR, build_sign_plan, slt
 
 
 HOST = os.getenv("HOST", "0.0.0.0")
@@ -31,7 +31,9 @@ app.add_middleware(
 )
 
 media_root = Path(BASE_DIR) / "media"
+signs_data_root = Path(SIGNS_DATA_DIR)
 app.mount("/media", StaticFiles(directory=media_root), name="media")
+app.mount("/signs-data", StaticFiles(directory=signs_data_root), name="signs-data")
 
 
 @app.get("/health")
@@ -40,6 +42,7 @@ def health() -> dict[str, object]:
         "status": "ok",
         "service": "sign-planner",
         "media_root": str(media_root),
+        "signs_data_root": str(signs_data_root),
         "slt_available": slt is not None,
         "slt_import_error": SLT_IMPORT_ERROR,
     }

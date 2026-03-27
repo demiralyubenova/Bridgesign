@@ -17,6 +17,7 @@ else:
 
 BASE_DIR = Path(__file__).resolve().parent
 MEDIA_DIR = BASE_DIR / "media" / "asl"
+SIGNS_DATA_DIR = BASE_DIR.parent / "signs_data"
 DEFAULT_FALLBACK_UNIT_MS = 1100
 DEFAULT_CLIP_UNIT_MS = 1800
 WORD_PATTERN = re.compile(r"[a-z0-9']+")
@@ -289,6 +290,12 @@ class SourceToken:
     normalized: str
 
 
+@dataclass(frozen=True)
+class DatasetClip:
+    lemma: str
+    path: Path
+
+
 def normalize_text(text: str) -> str:
     lowered = text.lower()
     lowered = re.sub(r"[\u2018\u2019]", "'", lowered)
@@ -325,6 +332,61 @@ def slugify(value: str) -> str:
     return value.lower().replace("_", "-")
 
 
+def _signs_data_key(value: str) -> str:
+    return normalize_text(value.replace("_", " "))
+
+
+def _parse_signs_data_clip(path: Path) -> tuple[str, int, int] | None:
+    stem = path.stem
+    if "_" not in stem:
+        return None
+
+    prefix, _, remaining = stem.partition("_")
+    if not prefix.isdigit() or "_" not in remaining:
+        return None
+
+    lemma, _, tail = remaining.rpartition("_")
+    if not lemma:
+        return None
+
+    signer_name = path.parent.name
+    try:
+        signer_rank = int(signer_name.split("_", 1)[1])
+    except (IndexError, ValueError):
+        signer_rank = 999
+
+    extension_rank = 0 if path.suffix.lower() == ".mp4" else 1
+    return _signs_data_key(lemma), extension_rank, signer_rank
+
+
+def build_signs_data_index() -> dict[str, list[DatasetClip]]:
+    index: dict[str, list[DatasetClip]] = {}
+    if not SIGNS_DATA_DIR.exists():
+        return index
+
+    candidates: dict[str, list[tuple[int, int, Path]]] = {}
+    for path in SIGNS_DATA_DIR.rglob("*"):
+        if path.suffix.lower() not in {".mp4", ".webm"}:
+            continue
+        parsed = _parse_signs_data_clip(path)
+        if not parsed:
+            continue
+        key, extension_rank, signer_rank = parsed
+        candidates.setdefault(key, []).append((extension_rank, signer_rank, path))
+
+    for key, options in candidates.items():
+        sorted_paths = sorted(options, key=lambda item: (item[0], item[1], str(item[2])))
+        index[key] = [
+            DatasetClip(lemma=key, path=path)
+            for _extension_rank, _signer_rank, path in sorted_paths
+        ]
+
+    return index
+
+
+SIGNS_DATA_INDEX = build_signs_data_index()
+
+
 def clip_url(base_url: str, unit_id: str, bucket: str) -> str | None:
     relative = Path(bucket) / f"{slugify(unit_id)}.mp4"
     candidate = MEDIA_DIR / relative
@@ -332,6 +394,12 @@ def clip_url(base_url: str, unit_id: str, bucket: str) -> str | None:
         return None
     base = base_url.rstrip("/")
     return f"{base}/media/asl/{relative.as_posix()}"
+
+
+def signs_data_url(base_url: str, clip_path: Path) -> str:
+    base = base_url.rstrip("/")
+    relative = clip_path.relative_to(SIGNS_DATA_DIR)
+    return f"{base}/signs-data/{relative.as_posix()}"
 
 
 def clip_unit(
@@ -350,6 +418,16 @@ def clip_unit(
     )
 
 
+def signs_data_unit(base_url: str, clip: DatasetClip, *, text: str | None = None, duration_ms: int = DEFAULT_CLIP_UNIT_MS) -> Unit:
+    return Unit(
+        type="clip",
+        id=f"DATASET-{slugify(clip.lemma).upper()}",
+        duration_ms=duration_ms,
+        text=text,
+        url=signs_data_url(base_url, clip.path),
+    )
+
+
 def card_unit(text: str) -> Unit:
     normalized = normalize_text(text)
     slug = slugify(normalized) if normalized else "unknown-word"
@@ -365,6 +443,10 @@ def fingerspell_units(word: str, base_url: str) -> list[Unit]:
     units: list[Unit] = []
     for character in word.upper():
         if "A" <= character <= "Z":
+            dataset_letter = dataset_token_unit(character.lower(), base_url, text=character)
+            if dataset_letter:
+                units.append(dataset_letter)
+                continue
             units.append(
                 Unit(
                     type="clip",
@@ -377,6 +459,20 @@ def fingerspell_units(word: str, base_url: str) -> list[Unit]:
         elif character.isdigit():
             units.append(clip_unit(base_url, DIGIT_LIBRARY[character], "numbers", text=character, duration_ms=850))
     return units
+
+
+def dataset_clip_for_key(key: str) -> DatasetClip | None:
+    matches = SIGNS_DATA_INDEX.get(_signs_data_key(key))
+    if not matches:
+        return None
+    return matches[0]
+
+
+def dataset_token_unit(token: str, base_url: str, *, text: str) -> Unit | None:
+    clip = dataset_clip_for_key(token)
+    if not clip:
+        return None
+    return signs_data_unit(base_url, clip, text=text)
 
 
 def known_token_unit(token: str, base_url: str, *, text: str) -> Unit | None:
@@ -489,6 +585,9 @@ def should_fingerspell_token(tokens: list[SourceToken], index: int) -> bool:
 
 def token_to_units(tokens: list[SourceToken], index: int, base_url: str) -> list[Unit]:
     token = tokens[index]
+    direct_clip = dataset_token_unit(token.normalized, base_url, text=token.original)
+    if direct_clip:
+        return [direct_clip]
     return fingerspell_units(token.original, base_url)
 
 
@@ -673,7 +772,7 @@ def build_sign_plan(text: str, base_url: str) -> dict[str, object]:
         "sign_language": "ASL",
         "mode": detect_mode(units),
         "priority": "urgent" if is_urgent(units) or text_is_urgent(text) else "normal",
-        "fallback_strategy": "word-first-name-fingerspell",
+        "fallback_strategy": "signs-data-word-sequence",
         "fingerspell_count": sum(1 for unit in units if unit.id.startswith("FS-")),
         "card_count": sum(1 for unit in units if unit.type == "card" and unit.id != "NO-SIGN-PLAN"),
         "units": [unit.as_dict() for unit in units],

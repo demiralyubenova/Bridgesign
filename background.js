@@ -1,18 +1,29 @@
 // BridgeSign Background Service Worker
 // Manages per-tab relay sessions, sign-planning requests, and the offscreen ASL pipeline.
 
-let RELAY_SERVER_URL = 'ws://localhost:3001';
-let SIGN_PLAN_SERVER_URL = 'http://localhost:8001';
+const DEFAULT_RELAY_URL = 'ws://localhost:3001';
+const DEFAULT_PLANNER_URL = 'http://localhost:8001';
 
-const LEGACY_RELAY_URLS = new Set(['ws://localhost:3001']);
-const LEGACY_PLANNER_URLS = new Set(['http://localhost:8001', 'http://127.0.0.1:8001']);
+let RELAY_SERVER_URL = DEFAULT_RELAY_URL;
+let SIGN_PLAN_SERVER_URL = DEFAULT_PLANNER_URL;
+
+const LEGACY_RELAY_URLS = new Set([
+  'ws://localhost:3001',
+  'ws://127.0.0.1:3001',
+  'ws://172.20.10.8:3001',
+]);
+const LEGACY_PLANNER_URLS = new Set([
+  'http://localhost:8001',
+  'http://127.0.0.1:8001',
+  'http://172.20.10.8:8001',
+]);
 
 function normalizeRelayUrl(url) {
-  return LEGACY_RELAY_URLS.has(url) ? RELAY_SERVER_URL : url;
+  return LEGACY_RELAY_URLS.has(url) ? DEFAULT_RELAY_URL : url;
 }
 
 function normalizePlannerUrl(url) {
-  return LEGACY_PLANNER_URLS.has(url) ? SIGN_PLAN_SERVER_URL : url;
+  return LEGACY_PLANNER_URLS.has(url) ? DEFAULT_PLANNER_URL : url;
 }
 
 chrome.storage.sync.get(
@@ -35,6 +46,14 @@ chrome.storage.sync.get(
 
 const tabSessions = new Map(); // tabId -> { port, ws, roomId, role, reconnectAttempts, latencyMs, pingInterval, lastError }
 const MAX_PENDING_MESSAGES = 50;
+
+function bgLog(message, details) {
+  if (details === undefined) {
+    console.log(`[BridgeSign][background] ${message}`);
+    return;
+  }
+  console.log(`[BridgeSign][background] ${message}`, details);
+}
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
   if (namespace !== 'sync') return;
@@ -65,6 +84,7 @@ chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'bridgesign' || !port.sender.tab) return;
 
   const tabId = port.sender.tab.id;
+  bgLog('Port connected', { tabId, url: port.sender.tab.url });
   const session = {
     port,
     ws: null,
@@ -81,10 +101,12 @@ chrome.runtime.onConnect.addListener((port) => {
   tabSessions.set(tabId, session);
 
   port.onMessage.addListener((msg) => {
+    bgLog('Port message received', { tabId, type: msg && msg.type, data: msg && msg.data });
     handleContentMessage(tabId, msg);
   });
 
   port.onDisconnect.addListener(() => {
+    bgLog('Port disconnected', { tabId });
     teardownSession(tabId);
   });
 });
@@ -112,6 +134,8 @@ function clearPingInterval(session) {
 function teardownSession(tabId) {
   const session = getSession(tabId);
   if (!session) return;
+
+  bgLog('Tearing down session', { tabId, roomId: session.roomId, role: session.role });
 
   clearPingInterval(session);
 
@@ -155,23 +179,43 @@ function joinRoom(tabId, roomId, role) {
   const session = getSession(tabId);
   if (!session || !roomId) return;
 
+  bgLog('Joining room', { tabId, roomId, role, relayUrl: RELAY_SERVER_URL });
+
   session.roomId = roomId;
   if (role) session.role = role;
   session.peerCount = 0;
   session.lastError = null;
 
   if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+    bgLog('WebSocket already open, sending JOIN immediately', { tabId, roomId, role: session.role });
     session.ws.send(JSON.stringify({ type: 'JOIN', roomId, role: session.role }));
     sendToTab(tabId, { type: 'STATE_UPDATE', data: { connected: true, roomId } });
     return;
   }
 
   if (session.ws && session.ws.readyState === WebSocket.CONNECTING) {
+    bgLog('WebSocket already connecting', { tabId, roomId });
     return;
   }
 
-  session.ws = new WebSocket(RELAY_SERVER_URL);
-  attachWebSocketHandlers(tabId, session);
+  try {
+    session.ws = new WebSocket(RELAY_SERVER_URL);
+    bgLog('WebSocket created', { tabId, relayUrl: RELAY_SERVER_URL });
+    attachWebSocketHandlers(tabId, session);
+  } catch (error) {
+    const fallbackRelayUrl = normalizeRelayUrl(RELAY_SERVER_URL);
+    if (fallbackRelayUrl && fallbackRelayUrl !== RELAY_SERVER_URL) {
+      RELAY_SERVER_URL = fallbackRelayUrl;
+      chrome.storage.sync.set({ bridgesignServerUrl: fallbackRelayUrl });
+      bgLog('Retrying WebSocket with fallback relay URL', { tabId, relayUrl: RELAY_SERVER_URL });
+      session.ws = new WebSocket(RELAY_SERVER_URL);
+      attachWebSocketHandlers(tabId, session);
+      return;
+    }
+
+    session.lastError = error && error.message ? error.message : 'WebSocket connection error';
+    console.error('[BridgeSign] Failed to open WebSocket:', error);
+  }
 }
 
 function attachWebSocketHandlers(tabId, session) {
@@ -179,6 +223,7 @@ function attachWebSocketHandlers(tabId, session) {
   if (!socket) return;
 
   socket.onopen = () => {
+    bgLog('WebSocket open', { tabId, roomId: session.roomId, role: session.role });
     const liveSession = getSession(tabId);
     if (!liveSession || liveSession.ws !== socket) return;
 
@@ -201,6 +246,7 @@ function attachWebSocketHandlers(tabId, session) {
 
     try {
       const msg = JSON.parse(event.data);
+      bgLog('WebSocket message', { tabId, type: msg.type, data: msg.data });
       if (msg.type === 'ROOM_INFO') {
         liveSession.peerCount = msg.data?.peers || 0;
         sendToTab(tabId, {
@@ -236,11 +282,13 @@ function attachWebSocketHandlers(tabId, session) {
     if (!liveSession || liveSession.ws !== socket) return;
 
     liveSession.lastError = 'WebSocket connection error';
+    bgLog('WebSocket error', { tabId, relayUrl: RELAY_SERVER_URL, error });
     console.error('[BridgeSign] WebSocket error:', error);
     sendToTab(tabId, { type: 'STATE_UPDATE', data: { connected: false, roomId: liveSession.roomId } });
   };
 
   socket.onclose = () => {
+    bgLog('WebSocket closed', { tabId, roomId: session.roomId, reconnectAttempts: session.reconnectAttempts });
     const liveSession = getSession(tabId);
     if (!liveSession || liveSession.ws !== socket) return;
 
@@ -292,35 +340,83 @@ function sendCaption(tabId, data) {
   const session = getSession(tabId);
   if (!session || !data) return;
 
-  sendOrQueueSessionMessage(session, { type: 'CAPTION', data });
+  bgLog('Handling caption for relay/planner', { tabId, roomId: session.roomId, role: session.role, data });
 
-  if (data.source === 'speech' && data.partial === false) {
+  if (data.source !== 'meet-caption') {
+    sendOrQueueSessionMessage(session, { type: 'CAPTION', data });
+  }
+
+  if ((data.source === 'speech' || data.source === 'meet-caption') && data.partial === false) {
     requestAndSendSignPlan(tabId, data);
   }
 }
 
 async function requestAndSendSignPlan(tabId, data) {
   const session = getSession(tabId);
-  const plannerUrl = (SIGN_PLAN_SERVER_URL || '').replace(/\/$/, '');
-  if (!session || !plannerUrl) return;
+  if (!session) return;
+
+  bgLog('Requesting sign plan', { tabId, text: data.text, source: data.source, plannerUrl: SIGN_PLAN_SERVER_URL });
+
+  const plannerCandidates = Array.from(new Set([
+    (SIGN_PLAN_SERVER_URL || '').replace(/\/$/, ''),
+    DEFAULT_PLANNER_URL,
+  ].filter(Boolean)));
+
+  let signPlan = null;
+  let plannerUrl = null;
+  let lastError = null;
+
+  for (const candidate of plannerCandidates) {
+    try {
+      bgLog('Trying planner candidate', { tabId, candidate, text: data.text });
+      const response = await fetch(`${candidate}/api/sign-plan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: data.text,
+          sign_language: 'ASL',
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Planner responded with ${response.status}`);
+      }
+
+      signPlan = await response.json();
+      plannerUrl = candidate;
+      bgLog('Planner responded successfully', {
+        tabId,
+        candidate,
+        mode: signPlan.mode,
+        units: Array.isArray(signPlan.units) ? signPlan.units.map((unit) => unit.id) : [],
+      });
+      break;
+    } catch (error) {
+      lastError = error && error.message ? error.message : 'Failed to build sign plan';
+      bgLog('Planner candidate failed', { tabId, candidate, error: lastError });
+    }
+  }
+
+  if (!signPlan || !plannerUrl) {
+    session.lastError = lastError || 'Failed to build sign plan';
+    console.warn('[BridgeSign] Failed to build sign plan:', session.lastError);
+    return;
+  }
+
+  if (plannerUrl !== SIGN_PLAN_SERVER_URL) {
+    SIGN_PLAN_SERVER_URL = plannerUrl;
+    chrome.storage.sync.set({ bridgesignPlannerUrl: plannerUrl });
+  }
 
   try {
-    const response = await fetch(`${plannerUrl}/api/sign-plan`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        text: data.text,
-        sign_language: 'ASL',
-      }),
+    bgLog('Delivering sign plan to local tab and relay', {
+      tabId,
+      roomId: session.roomId,
+      text: data.text,
+      units: signPlan.units.map((unit) => unit.id),
     });
-
-    if (!response.ok) {
-      throw new Error(`Planner responded with ${response.status}`);
-    }
-
-    const signPlan = await response.json();
     sendToTab(tabId, {
       type: 'LOCAL_SIGN_PLAN',
       data: {
@@ -341,13 +437,20 @@ async function requestAndSendSignPlan(tabId, data) {
       },
     });
   } catch (error) {
-    session.lastError = error && error.message ? error.message : 'Failed to build sign plan';
-    console.warn('[BridgeSign] Failed to build sign plan:', session.lastError);
+    session.lastError = error && error.message ? error.message : 'Failed to deliver sign plan';
+    console.warn('[BridgeSign] Failed to deliver sign plan:', session.lastError);
   }
 }
 
 function sendOrQueueSessionMessage(session, payload) {
   if (!session || !payload) return false;
+
+  bgLog('Sending or queueing session message', {
+    roomId: session.roomId,
+    role: session.role,
+    type: payload.type,
+    wsState: session.ws ? session.ws.readyState : null,
+  });
 
   if (session.ws && session.ws.readyState === WebSocket.OPEN) {
     session.ws.send(JSON.stringify(payload));
@@ -382,6 +485,7 @@ function flushPendingMessages(session) {
 function sendToTab(tabId, msg) {
   const session = getSession(tabId);
   if (session && session.port) {
+    bgLog('Sending message to tab', { tabId, type: msg.type, data: msg.data });
     session.port.postMessage(msg);
   }
 }

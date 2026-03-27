@@ -8,15 +8,23 @@ document.addEventListener('DOMContentLoaded', () => {
   const savePlannerBtn = document.getElementById('btn-save-planner');
   const relayDefaultUrl = 'ws://localhost:3001';
   const plannerDefaultUrl = 'http://localhost:8001';
+  const legacyRelayUrls = new Set([
+    'ws://localhost:3001',
+    'ws://127.0.0.1:3001',
+    'ws://172.20.10.8:3001',
+  ]);
+  const legacyPlannerUrls = new Set([
+    'http://localhost:8001',
+    'http://127.0.0.1:8001',
+    'http://172.20.10.8:8001',
+  ]);
 
   function normalizeRelayUrl(url) {
-    return url === 'ws://localhost:3001' ? relayDefaultUrl : url;
+    return legacyRelayUrls.has(url) ? relayDefaultUrl : url;
   }
 
   function normalizePlannerUrl(url) {
-    return url === 'http://localhost:8001' || url === 'http://127.0.0.1:8001'
-      ? plannerDefaultUrl
-      : url;
+    return legacyPlannerUrls.has(url) ? plannerDefaultUrl : url;
   }
 
   // Load saved server URL

@@ -23,7 +23,21 @@
     toolbar: null,
     autoInjectDisabled: false,
     recentLocalSpeech: [],
+    recentMeetSpeechPlans: [],
+    recentPlannerRequests: [],
+    recentManifestPlayback: [],
   };
+
+  let signerSpeechRec = null;
+  let signerSpeechFallbackTimer = null;
+
+  function contentLog(message, details) {
+    if (details === undefined) {
+      console.log(`[BridgeSign][content] ${message}`);
+      return;
+    }
+    console.log(`[BridgeSign][content] ${message}`, details);
+  }
 
   // ==================== COMPONENT: VoiceToolbar ====================
   class VoiceToolbar {
@@ -105,6 +119,10 @@
             <div class="vt-session-pill">
               <div class="vt-dot ${state.connected ? 'vt-dot--live' : 'vt-dot--idle'}"></div>
               <span class="vt-session-label">${this.sessionId}</span>
+            </div>
+
+            <div class="vt-role-pill vt-role-pill--${state.role || 'unknown'}" id="sf-role-pill">
+              ${state.role === 'signer' ? 'SIGNER' : state.role === 'speaker' ? 'SPEAKER' : 'ROLE'}
             </div>
 
             <div class="vt-spacer"></div>
@@ -293,6 +311,7 @@
 
   function sendPortMessage(message) {
     try {
+      contentLog('Sending port message', message);
       port.postMessage(message);
       return true;
     } catch (error) {
@@ -302,6 +321,7 @@
   }
 
   port.onMessage.addListener((msg) => {
+    contentLog('Received background message', { type: msg.type, data: msg.data });
     switch (msg.type) {
       case 'STATE_UPDATE':
         state.connected = msg.data.connected;
@@ -309,21 +329,25 @@
         if (state.toolbar) state.toolbar.setSessionId(state.roomId);
         break;
       case 'REMOTE_CAPTION':
+        contentLog('Applying remote caption to transcript', msg.data);
         if (state.toolbar) state.toolbar.addTranscript({ 
           speaker: msg.data.source === 'speech' ? 'Voice' : 'Sign', 
           text: msg.data.text,
           partial: msg.data.partial 
         });
+        if (state.role === 'signer' && msg.data.source === 'speech' && msg.data.partial === false) {
+          markSignerSpeechSourceReady('relay');
+          contentLog('Remote final speech caption will trigger local planner fetch', { text: msg.data.text });
+          requestLocalSignPlan(msg.data.text);
+        }
         break;
       case 'REMOTE_SIGN_PLAN':
-        if (state.role === 'signer' && window.SignPlayer) {
-          window.SignPlayer.enqueueManifest(msg.data.signPlan);
-        }
+        contentLog('Received remote sign plan', msg.data && msg.data.signPlan);
+        enqueueIncomingSignPlan(msg.data.signPlan);
         break;
       case 'LOCAL_SIGN_PLAN':
-        if (state.role === 'signer' && window.SignPlayer) {
-          window.SignPlayer.enqueueManifest(msg.data.signPlan);
-        }
+        contentLog('Received local sign plan', msg.data && msg.data.signPlan);
+        enqueueIncomingSignPlan(msg.data.signPlan);
         break;
       case 'PEER_JOINED': showNotification(`Peer joined as ${msg.data.role}`); break;
       case 'PEER_LEFT': showNotification('Peer disconnected'); break;
@@ -357,12 +381,212 @@
     return state.recentLocalSpeech.some((entry) => entry.text === normalized);
   }
 
-  function startMeetCaptionCapture() {
-    if (!window.__BridgeSignCaptionScraper) return;
+  function shouldRequestMeetSpeechPlan(text) {
+    const normalized = normalizeTranscriptText(text);
+    if (!normalized) return false;
 
-    window.__BridgeSignCaptionScraper.start((cap) => {
+    const cutoff = Date.now() - 2000;
+    state.recentMeetSpeechPlans = state.recentMeetSpeechPlans.filter((entry) => entry.ts >= cutoff);
+    if (state.recentMeetSpeechPlans.some((entry) => entry.text === normalized)) {
+      return false;
+    }
+
+    state.recentMeetSpeechPlans.push({ text: normalized, ts: Date.now() });
+    return true;
+  }
+
+  function shouldRequestPlanner(text) {
+    const normalized = normalizeTranscriptText(text);
+    if (!normalized) return false;
+
+    const cutoff = Date.now() - 2500;
+    state.recentPlannerRequests = state.recentPlannerRequests.filter((entry) => entry.ts >= cutoff);
+    if (state.recentPlannerRequests.some((entry) => entry.text === normalized)) {
+      contentLog('Skipping duplicate planner request', { text: normalized });
+      return false;
+    }
+
+    state.recentPlannerRequests.push({ text: normalized, ts: Date.now() });
+    return true;
+  }
+
+  function shouldEnqueueManifest(text) {
+    const normalized = normalizeTranscriptText(text);
+    if (!normalized) return false;
+
+    const cutoff = Date.now() - 2500;
+    state.recentManifestPlayback = state.recentManifestPlayback.filter((entry) => entry.ts >= cutoff);
+    if (state.recentManifestPlayback.some((entry) => entry.text === normalized)) {
+      contentLog('Skipping duplicate manifest enqueue', { text: normalized });
+      return false;
+    }
+
+    state.recentManifestPlayback.push({ text: normalized, ts: Date.now() });
+    return true;
+  }
+
+  function getPlannerCandidates() {
+    return new Promise((resolve) => {
+      chrome.storage.sync.get(['bridgesignPlannerUrl', 'signflowPlannerUrl'], (res) => {
+        const savedPlannerUrl = (res.bridgesignPlannerUrl || res.signflowPlannerUrl || '').trim();
+        const candidates = Array.from(new Set([
+          savedPlannerUrl,
+          'http://localhost:8001',
+          'http://127.0.0.1:8001',
+        ].filter(Boolean).map((url) => url.replace(/\/$/, ''))));
+        resolve(candidates);
+      });
+    });
+  }
+
+  async function fetchSignPlanLocally(text) {
+    const plannerCandidates = await getPlannerCandidates();
+    contentLog('Local planner candidates prepared', { text, plannerCandidates });
+    let lastError = null;
+
+    for (const plannerUrl of plannerCandidates) {
+      try {
+        contentLog('Trying local planner candidate', { text, plannerUrl });
+        const response = await fetch(`${plannerUrl}/api/sign-plan`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text,
+            sign_language: 'ASL',
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Planner responded with ${response.status}`);
+        }
+
+        const signPlan = await response.json();
+        contentLog('Local planner returned sign plan', {
+          text,
+          plannerUrl,
+          mode: signPlan.mode,
+          units: Array.isArray(signPlan.units) ? signPlan.units.map((unit) => unit.id) : [],
+        });
+        if (plannerUrl === 'http://localhost:8001' || plannerUrl === 'http://127.0.0.1:8001') {
+          chrome.storage.sync.set({ bridgesignPlannerUrl: 'http://localhost:8001' });
+        }
+        return signPlan;
+      } catch (error) {
+        lastError = error;
+        contentLog('Local planner candidate failed', {
+          text,
+          plannerUrl,
+          error: error && error.message ? error.message : error,
+        });
+      }
+    }
+
+    throw lastError || new Error('Failed to build sign plan');
+  }
+
+  function enqueueIncomingSignPlan(signPlan) {
+    if (state.role !== 'signer' || !window.SignPlayer || !signPlan || !Array.isArray(signPlan.units)) {
+      contentLog('Ignoring sign plan enqueue request', {
+        role: state.role,
+        hasPlayer: Boolean(window.SignPlayer),
+        hasPlan: Boolean(signPlan),
+      });
+      return;
+    }
+
+    const manifestText = signPlan.text || signPlan.units.map((unit) => unit && unit.text).filter(Boolean).join(' ');
+    if (!shouldEnqueueManifest(manifestText)) {
+      return;
+    }
+
+    contentLog('Enqueuing sign plan into SignPlayer', {
+      text: signPlan.text,
+      mode: signPlan.mode,
+      units: signPlan.units.map((unit) => unit.id),
+    });
+    window.SignPlayer.enqueueManifest(signPlan);
+  }
+
+  async function requestLocalSignPlan(text) {
+    if (state.role !== 'signer' || !window.SignPlayer || !shouldRequestPlanner(text)) {
+      contentLog('Skipping local planner request', {
+        role: state.role,
+        hasPlayer: Boolean(window.SignPlayer),
+        text,
+      });
+      return;
+    }
+
+    try {
+      contentLog('Requesting local sign plan from signer tab', { text });
+      const signPlan = await fetchSignPlanLocally(text);
+      enqueueIncomingSignPlan(signPlan);
+    } catch (error) {
+      console.warn('[BridgeSign] Failed to fetch sign plan in signer tab:', error && error.message ? error.message : error);
+    }
+  }
+
+  function clearSignerSpeechFallbackTimer() {
+    if (signerSpeechFallbackTimer) {
+      clearTimeout(signerSpeechFallbackTimer);
+      signerSpeechFallbackTimer = null;
+    }
+  }
+
+  function stopSignerSpeechRecognitionFallback() {
+    if (!signerSpeechRec) return;
+    signerSpeechRec.onend = null;
+    signerSpeechRec.stop();
+    signerSpeechRec = null;
+  }
+
+  function markSignerSpeechSourceReady(source) {
+    if (state.role !== 'signer') return;
+    clearSignerSpeechFallbackTimer();
+    if (signerSpeechRec) {
+      contentLog('Stopping signer microphone fallback because a better speech source is active', { source });
+      stopSignerSpeechRecognitionFallback();
+    }
+  }
+
+  function scheduleSignerSpeechFallback() {
+    clearSignerSpeechFallbackTimer();
+
+    if (state.role !== 'signer') return;
+
+    signerSpeechFallbackTimer = window.setTimeout(() => {
+      signerSpeechFallbackTimer = null;
+
+      if (state.role !== 'signer') return;
+      if (window.MeetCaptionScraper && window.MeetCaptionScraper.areCaptionsActive()) {
+        contentLog('Skipping signer microphone fallback because Meet captions are active');
+        return;
+      }
+
+      contentLog('No Meet captions detected yet; starting signer microphone fallback');
+      startMeetCaptionScraping();
+    }, 6000);
+  }
+
+  function startMeetCaptionCapture() {
+    if (!window.MeetCaptionScraper) {
+      contentLog('Meet caption scraper unavailable');
+      if (state.role === 'signer') {
+        startMeetCaptionScraping();
+      }
+      return;
+    }
+
+    contentLog('Starting Meet caption scraper capture');
+    const startResult = window.MeetCaptionScraper.start((cap) => {
       if (!cap || !cap.text) return;
+      contentLog('Meet caption observed', cap);
       if (state.role === 'speaker' && isLikelyOwnMeetCaption(cap.text)) return;
+      if (state.role === 'signer') {
+        markSignerSpeechSourceReady('meet-captions');
+      }
 
       if (state.toolbar) {
         state.toolbar.addTranscript({
@@ -371,7 +595,24 @@
           partial: false,
         });
       }
+
+      if (
+        state.role === 'signer' &&
+        !isLikelyOwnMeetCaption(cap.text) &&
+        shouldRequestMeetSpeechPlan(cap.text)
+      ) {
+        contentLog('Meet caption will trigger planner request and background caption', { text: cap.text });
+        requestLocalSignPlan(cap.text);
+        sendPortMessage({
+          type: 'CAPTION',
+          data: { source: 'meet-caption', text: cap.text, partial: false },
+        });
+      }
     });
+
+    if (state.role === 'signer' && startResult && startResult.captionsDetected) {
+      markSignerSpeechSourceReady('meet-captions-active');
+    }
   }
 
   // ==================== ONBOARDING TUTORIAL ====================
@@ -508,6 +749,7 @@
   }
 
   async function startSession() {
+    contentLog('Starting session', { role: state.role, roomId: getRoomId() });
     const root = document.createElement('div');
     root.id = 'bridgesign-root';
     document.body.appendChild(root);
@@ -516,6 +758,8 @@
     if (state.role === 'signer') {
       const existingPip = document.getElementById('sf-pip-container');
       if (existingPip) existingPip.remove();
+      const existingPlayback = document.getElementById('sf-sign-spotlight');
+      if (existingPlayback) existingPlayback.remove();
 
       const pip = document.createElement('div');
       pip.id = 'sf-pip-container';
@@ -530,20 +774,42 @@
       `;
       document.body.appendChild(pip);
       initDraggable(pip, pip.querySelector('#sf-pip-header'));
+
+      const playback = document.createElement('div');
+      playback.id = 'sf-sign-spotlight';
+      playback.className = 'sf-sign-spotlight vt-panel';
+      playback.innerHTML = `
+        <div class="sf-sign-spotlight-header" id="sf-sign-spotlight-header">
+          <span class="sf-sign-spotlight-title">ASL PLAYBACK</span>
+          <button class="sf-sign-replay" id="sf-sign-spotlight-replay" type="button">Replay</button>
+        </div>
+        <div class="sf-sign-stage sf-sign-spotlight-stage">
+          <video class="sf-sign-video" id="sf-sign-spotlight-video" playsinline muted></video>
+          <div class="sf-sign-fallback-card" id="sf-sign-spotlight-fallback-card" style="display:none;"></div>
+        </div>
+        <div class="sf-sign-meta">
+          <div class="sf-sign-status" id="sf-sign-spotlight-status">Waiting for ASL plan</div>
+          <div class="sf-sign-current" id="sf-sign-spotlight-current">-</div>
+        </div>
+        <div class="sf-sign-unit-list" id="sf-sign-spotlight-unit-list"></div>
+      `;
+      document.body.appendChild(playback);
+      initDraggable(playback, playback.querySelector('#sf-sign-spotlight-header'));
     }
 
     state.toolbar = new VoiceToolbar({ container: root, sessionId: getRoomId() });
     state.toolbar.mount();
 
     if (state.role === 'signer' && window.SignPlayer) {
+      contentLog('Mounting SignPlayer for signer role');
       window.SignPlayer.mount({
-        section: document.getElementById('sf-sign-section'),
-        status: document.getElementById('sf-sign-status'),
-        label: document.getElementById('sf-sign-current'),
-        unitList: document.getElementById('sf-sign-unit-list'),
-        video: document.getElementById('sf-sign-video'),
-        fallbackCard: document.getElementById('sf-sign-fallback-card'),
-        replayButton: document.getElementById('sf-replay-sign'),
+        section: document.getElementById('sf-sign-spotlight'),
+        status: document.getElementById('sf-sign-spotlight-status'),
+        label: document.getElementById('sf-sign-spotlight-current'),
+        unitList: document.getElementById('sf-sign-spotlight-unit-list'),
+        video: document.getElementById('sf-sign-spotlight-video'),
+        fallbackCard: document.getElementById('sf-sign-spotlight-fallback-card'),
+        replayButton: document.getElementById('sf-sign-spotlight-replay'),
       });
     }
 
@@ -566,12 +832,12 @@
     } else {
       document.dispatchEvent(new CustomEvent('bridgesign-vcam-stop'));
       await startASLRecognition();
-
-      // Start scraping Meet's built-in CC so the signer can read speech
-      startMeetCaptionScraping();
     }
 
     startMeetCaptionCapture();
+    if (state.role === 'signer') {
+      scheduleSignerSpeechFallback();
+    }
 
     // Load settings
     chrome.storage.local.get(['sfSettings', 'overlayPos'], (res) => {
@@ -597,6 +863,7 @@
   }
 
   function switchRole() {
+    contentLog('Switching role', { previousRole: state.role });
     endSession();
     showRoleSelector();
   }
@@ -613,7 +880,7 @@
       stopMeetCaptionScraping();
     }
 
-    if (window.__BridgeSignCaptionScraper) window.__BridgeSignCaptionScraper.stop();
+    if (window.MeetCaptionScraper) window.MeetCaptionScraper.stop();
 
     document.dispatchEvent(new CustomEvent('bridgesign-vcam-stop'));
 
@@ -632,6 +899,7 @@
       'bridgesign-root',
       'bridgesign-role-selector',
       'sf-pip-container',
+      'sf-sign-spotlight',
       'sf-toast-container',
     ].forEach((id) => {
       const el = document.getElementById(id);
@@ -650,6 +918,7 @@
   }
 
   function endSession({ notifyBackground = true } = {}) {
+    contentLog('Ending session', { role: state.role, roomId: state.roomId, notifyBackground });
     if (notifyBackground && (state.connected || state.roomId)) {
       sendPortMessage({ type: 'LEAVE_ROOM' });
     }
@@ -762,8 +1031,6 @@
   // ==================== SIGNER SPEECH LISTENER ====================
   // Uses the same Web Speech API as the speaker role, but for the signer
   // to hear what others say through their microphone picking up meeting audio.
-  let signerSpeechRec = null;
-
   function startMeetCaptionScraping() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -771,6 +1038,7 @@
       return;
     }
     if (signerSpeechRec) stopMeetCaptionScraping();
+    contentLog('Starting signer speech recognition fallback');
 
     signerSpeechRec = new SpeechRecognition();
     signerSpeechRec.lang = SPEECH_RECOGNITION_LANG;
@@ -784,15 +1052,18 @@
         else interim += e.results[i][0].transcript;
       }
       if (final) {
+        contentLog('Signer speech recognition final transcript', { text: final });
         if (state.toolbar) {
           state.toolbar.addTranscript({ speaker: 'Speaker', text: final, partial: false });
         }
         document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text: final } }));
+        requestLocalSignPlan(final);
 
         const now = new Date();
         const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
         state.fullTranscript.push({ timestamp: timeStr, speaker: 'Speaker', text: final });
       } else if (interim) {
+        contentLog('Signer speech recognition interim transcript', { text: interim });
         if (state.toolbar) {
           state.toolbar.addTranscript({ speaker: 'Speaker', text: interim, partial: true });
         }
@@ -815,18 +1086,16 @@
 
     try {
       signerSpeechRec.start();
-      showNotification('🎙️ Listening for speaker audio');
+      showNotification('🎙️ Using microphone fallback for speaker audio');
     } catch (err) {
       console.error('[BridgeSign] Failed to start signer speech recognition:', err);
     }
   }
 
   function stopMeetCaptionScraping() {
-    if (signerSpeechRec) {
-      signerSpeechRec.onend = null;
-      signerSpeechRec.stop();
-      signerSpeechRec = null;
-    }
+    contentLog('Stopping signer caption/speech capture');
+    clearSignerSpeechFallbackTimer();
+    stopSignerSpeechRecognitionFallback();
     if (window.MeetCaptionScraper) window.MeetCaptionScraper.stop();
   }
 

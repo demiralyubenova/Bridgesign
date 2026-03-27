@@ -4,100 +4,65 @@ from planner import build_sign_plan
 
 
 class PlannerTests(unittest.TestCase):
-    def test_exact_phrase_returns_clip(self):
-        plan = build_sign_plan("Can you repeat that?", "http://localhost:8001")
+    def test_phrase_uses_word_videos_and_letter_fallback(self):
+        plan = build_sign_plan("How are you", "http://127.0.0.1:8001")
         self.assertEqual(plan["mode"], "clips")
-        self.assertEqual(plan["units"][0]["id"], "CAN-YOU-REPEAT-THAT")
-
-    def test_unknown_word_fingerspells(self):
-        plan = build_sign_plan("Maya", "http://localhost:8001")
-        self.assertEqual(plan["mode"], "fingerspell")
         self.assertEqual([unit["id"] for unit in plan["units"]], [
-            "FS-H",
-            "FS-O",
-            "FS-W",
-            "FS-A",
-            "FS-R",
-            "FS-E",
-            "FS-Y",
-            "FS-O",
-            "FS-U",
+            "DATASET-HOW",
+            "DATASET-A",
+            "DATASET-R",
+            "DATASET-E",
+            "DATASET-YOU",
         ])
+        self.assertEqual(plan["units"][0]["url"], "http://127.0.0.1:8001/signs-data/signer_5/00215_how_28212.f398.mp4")
+        self.assertEqual(plan["units"][-1]["url"], "http://127.0.0.1:8001/signs-data/signer_5/00381_you_64386.f136.mp4")
 
-    def test_single_word_phrase_prefers_phrase_sign(self):
-        plan = build_sign_plan("Hello", "http://localhost:8001")
+    def test_known_word_prefers_dataset_clip(self):
+        plan = build_sign_plan("Hello", "http://127.0.0.1:8001")
         self.assertEqual(plan["mode"], "clips")
-        self.assertEqual([unit["id"] for unit in plan["units"]], ["HELLO"])
+        self.assertEqual([unit["id"] for unit in plan["units"]], ["DATASET-HELLO"])
+        self.assertEqual(plan["units"][0]["url"], "http://127.0.0.1:8001/signs-data/signer_9/00342_hello_27171.mp4")
 
-    def test_unknown_word_uses_fingerspelling(self):
-        plan = build_sign_plan("dashboard", "http://localhost:8001")
-        self.assertEqual(plan["mode"], "fingerspell")
+    def test_unknown_word_uses_letter_videos(self):
+        plan = build_sign_plan("dashboard", "http://127.0.0.1:8001")
+        self.assertEqual(plan["mode"], "clips")
         self.assertEqual(plan["card_count"], 0)
-        self.assertEqual(plan["fingerspell_count"], 9)
+        self.assertEqual(plan["fingerspell_count"], 0)
         self.assertEqual([unit["id"] for unit in plan["units"]], [
-            "FS-D",
-            "FS-A",
-            "FS-S",
-            "FS-H",
-            "FS-B",
-            "FS-O",
-            "FS-A",
-            "FS-R",
-            "FS-D",
+            "DATASET-D",
+            "DATASET-A",
+            "DATASET-S",
+            "DATASET-H",
+            "DATASET-B",
+            "DATASET-O",
+            "DATASET-A",
+            "DATASET-R",
+            "DATASET-D",
         ])
 
-    def test_name_phrase_is_fingerspelled(self):
-        plan = build_sign_plan("My name is Maya", "http://localhost:8001")
-        self.assertEqual(plan["mode"], "fingerspell")
+    def test_name_phrase_uses_word_and_letter_videos(self):
+        plan = build_sign_plan("My name is Maya", "http://127.0.0.1:8001")
+        self.assertEqual(plan["mode"], "mixed")
         self.assertEqual([unit["id"] for unit in plan["units"]], [
-            "FS-M",
+            "DATASET-MY",
+            "DATASET-NAME",
+            "DATASET-I",
+            "DATASET-S",
+            "DATASET-M",
+            "DATASET-A",
             "FS-Y",
-            "FS-N",
-            "FS-A",
-            "FS-M",
-            "FS-E",
-            "FS-I",
-            "FS-S",
-            "FS-M",
-            "FS-A",
-            "FS-Y",
-            "FS-A",
-        ])
-
-    def test_acronym_is_fingerspelled(self):
-        plan = build_sign_plan("ASL", "http://localhost:8001")
-        self.assertEqual(plan["mode"], "fingerspell")
-        self.assertEqual([unit["id"] for unit in plan["units"]], ["FS-A", "FS-S", "FS-L"])
-
-    def test_mixed_sentence_is_fingerspelled(self):
-        plan = build_sign_plan("Please meet Maya", "http://localhost:8001")
-        self.assertEqual(plan["mode"], "fingerspell")
-        self.assertEqual([unit["id"] for unit in plan["units"]], [
-            "FS-P",
-            "FS-L",
-            "FS-E",
-            "FS-A",
-            "FS-S",
-            "FS-E",
-            "FS-M",
-            "FS-E",
-            "FS-E",
-            "FS-T",
-            "FS-M",
-            "FS-A",
-            "FS-Y",
-            "FS-A",
+            "DATASET-A",
         ])
 
     def test_urgent_phrase_is_prioritized(self):
-        plan = build_sign_plan("Stop", "http://localhost:8001")
+        plan = build_sign_plan("Stop", "http://127.0.0.1:8001")
         self.assertEqual(plan["priority"], "urgent")
 
     def test_provider_metadata_is_present(self):
-        plan = build_sign_plan("Hello", "http://localhost:8001")
+        plan = build_sign_plan("Hello", "http://127.0.0.1:8001")
         self.assertIn("provider", plan)
         self.assertIn("provider_available", plan)
-        self.assertEqual(plan["fallback_strategy"], "word-first-name-fingerspell")
+        self.assertEqual(plan["fallback_strategy"], "signs-data-word-sequence")
 
 
 if __name__ == "__main__":

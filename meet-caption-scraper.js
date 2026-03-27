@@ -1,74 +1,108 @@
 // SignFlow Meet Caption Scraper
-// Scrapes Google Meet's built-in captions via MutationObserver
-// so the ASL-signer user gets live subtitles without requiring
-// other participants to install the extension.
+// Watches Google Meet for built-in captions so the signer flow can
+// translate speech without depending on microphone pickup.
 
 const MeetCaptionScraper = (() => {
   'use strict';
 
-  // ==================== STATE ====================
   let isActive = false;
-  let observer = null;
-  let captionCallback = null;
+  let pageObserver = null;
   let pollIntervalId = null;
+  let processTimer = null;
+  let captionCallback = null;
   let captionContainer = null;
-  let lastCaptionText = '';
   let lastSpeaker = '';
+  let captionsSeenAt = 0;
+  const recentlyEmitted = new Map();
 
-  // ==================== SELECTOR STRATEGIES ====================
-  // Google Meet changes DOM structure frequently. We use multiple
-  // strategies to find the caption container, ordered by reliability.
-
-  const CAPTION_SELECTORS = [
-    // 2025-2026 known caption container selectors
-    'div.a4cQT',                           // Classic container
-    'div[jscontroller] div.iOzk7',         // Caption text wrapper
-    'div.TBMuR.bj4p3b',                    // Outer caption bar
-    'div[class*="caption"]',               // Fuzzy fallback
+  const CAPTION_CONTAINER_SELECTORS = [
+    'div.a4cQT',
+    'div[jscontroller] div.iOzk7',
+    'div.TBMuR.bj4p3b',
+    'div[aria-live="polite"]',
+    'div[aria-live="assertive"]',
+    'div[role="log"]',
+    'div[role="status"]',
+    'div[class*="caption"]',
+    'div[class*="subtitle"]',
+    'div[data-is-caption]',
   ];
 
-  // Speaker name selectors within a caption bubble
   const SPEAKER_SELECTORS = [
-    'div.zs7s8d.jxFHg',     // Speaker name element
-    'span.CNusmb',           // Alternative speaker name
-    'div[class*="speaker"]', // Fuzzy fallback
+    'div.zs7s8d.jxFHg',
+    'span.CNusmb',
+    'span[data-self-name]',
+    'div[class*="speaker"]',
+    'span[class*="speaker"]',
   ];
 
-  // Caption text selectors within a caption bubble
   const TEXT_SELECTORS = [
-    'span.VbkSUe',             // Caption text span
-    'div.iTTPOb.VbkSUe span',  // Nested text span
-    'span[class*="caption"]',  // Fuzzy fallback
+    'span.VbkSUe',
+    'div.iTTPOb.VbkSUe span',
+    'span[class*="caption"]',
+    'span[class*="subtitle"]',
+    'div[class*="caption"] span',
+    'div[class*="subtitle"] span',
   ];
 
-  // ==================== FINDING CAPTIONS ====================
+  const SYSTEM_ANNOUNCEMENT_PATTERNS = [
+    /\b(you|someone) joined\b/,
+    /\b(you|someone) left\b/,
+    /\braised (their )?hand\b/,
+    /\bmeeting recording\b/,
+    /\bpresenting\b/,
+    /\bcaption(s)? turned (on|off)\b/,
+    /\bsubtitle(s)? turned (on|off)\b/,
+  ];
 
-  /**
-   * Attempts to locate the caption container using multiple selector strategies.
-   * Falls back to a heuristic search if none of the known selectors work.
-   */
-  function findCaptionContainer() {
-    // Strategy 1: Try known selectors
-    for (const sel of CAPTION_SELECTORS) {
-      const el = document.querySelector(sel);
-      if (el && el.offsetHeight > 0) return el;
-    }
+  const BRIDGESIGN_UI_SELECTORS = [
+    '#bridgesign-root',
+    '#sf-pip-container',
+    '#sf-sign-spotlight',
+    '#bridgesign-role-selector',
+    '#bridgesign-onboarding',
+    '#sf-toast-container',
+  ];
 
-    // Strategy 2: Heuristic — look for a bottom-positioned container
-    // with short, rapidly changing text content (caption-like behavior)
-    const candidates = document.querySelectorAll('div[jscontroller]');
-    for (const c of candidates) {
-      const rect = c.getBoundingClientRect();
-      // Captions usually sit in the bottom 20% of the viewport
-      if (
-        rect.bottom > window.innerHeight * 0.75 &&
-        rect.height > 20 &&
-        rect.height < 200 &&
-        c.innerText.trim().length > 0
-      ) {
-        return c;
-      }
+  const GENERIC_NON_CAPTION_LABELS = new Set([
+    'speaker',
+    'speakers',
+    'signer',
+    'signers',
+    'voice',
+    'toolbar',
+    'transcript',
+    'listening',
+    'asl',
+    'playback',
+    'preview',
+    'replay',
+    'you',
+  ]);
+
+  function normalizeText(value) {
+    return (value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function isBridgeSignUiElement(el) {
+    if (!el || typeof el.closest !== 'function') return false;
+    return BRIDGESIGN_UI_SELECTORS.some((selector) => Boolean(el.closest(selector)));
+  }
+
+  function containsBridgeSignUi(el) {
+    if (!el || typeof el.querySelector !== 'function') return false;
+    return BRIDGESIGN_UI_SELECTORS.some((selector) => Boolean(el.querySelector(selector)));
+  }
+
+  function isVisible(el) {
+    if (!el || !el.isConnected) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 8 || rect.height < 8) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
+      return false;
     }
+    return rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
   }
 
   function isSystemAnnouncement(text) {
@@ -77,221 +111,385 @@ const MeetCaptionScraper = (() => {
     return SYSTEM_ANNOUNCEMENT_PATTERNS.some((pattern) => pattern.test(normalized));
   }
 
-  /**
-   * Extract speaker name and text from a caption element.
-   */
-  function extractCaptionData(container) {
-    const results = [];
+  function looksLikeInvalidCaptionText(speaker, text) {
+    const normalizedSpeaker = normalizeText(speaker).toLowerCase();
+    const normalizedText = normalizeText(text).toLowerCase();
+    if (!normalizedText) return true;
 
-    // Google Meet renders captions as individual bubbles per speaker.
-    // Each bubble usually has a speaker name and a text span.
-    const seen = new Set();
-
-    // Attempt structured extraction first
-    for (const sel of SPEAKER_SELECTORS) {
-      const speakerEls = container.querySelectorAll(sel);
-      for (const speakerEl of speakerEls) {
-        const speaker = speakerEl.textContent.trim();
-        if (!speaker) continue;
-
-        // Find the sibling/nearby text element
-        const parent = speakerEl.closest('div[jscontroller]') || speakerEl.parentElement;
-        let text = '';
-        for (const tSel of TEXT_SELECTORS) {
-          const textEls = parent ? parent.querySelectorAll(tSel) : [];
-          for (const te of textEls) {
-            text += te.textContent.trim() + ' ';
-          }
-          if (text.trim()) break;
-        }
-
-        if (text.trim() && !seen.has(speaker + text.trim())) {
-          seen.add(speaker + text.trim());
-          results.push({ speaker, text: text.trim() });
-        }
-      }
+    if (
+      normalizedText.includes('listening') ||
+      normalizedText.includes('toolbar') ||
+      normalizedText.includes('transcript') ||
+      normalizedText.includes('asl playback') ||
+      normalizedText.includes('asl preview')
+    ) {
+      return true;
     }
 
-    // Fallback: grab all text from the container as a single caption
-    if (results.length === 0) {
-      const fullText = container.innerText.trim();
-      if (fullText) {
-        // Try to split "Speaker Name\nCaption text" pattern
-        const lines = fullText.split('\n').filter(l => l.trim());
-        if (lines.length >= 2) {
-          // Heuristic: if first line is short (< 30 chars) it's likely the speaker name
-          const potentialSpeaker = lines[0].trim();
-          const potentialText = lines.slice(1).join(' ').trim();
-          if (potentialSpeaker.length < 30 && potentialText.length > 0) {
-            results.push({ speaker: potentialSpeaker, text: potentialText });
-          } else {
-            results.push({ speaker: 'Speaker', text: fullText });
-          }
-        } else if (lines.length === 1) {
-          results.push({ speaker: lastSpeaker || 'Speaker', text: lines[0].trim() });
-        }
-      }
+    const words = normalizedText
+      .split(/\s+/)
+      .map((word) => word.replace(/[^a-z0-9'-]/g, ''))
+      .filter(Boolean);
+    if (!words.length) return true;
+
+    if (normalizedSpeaker && normalizedText === normalizedSpeaker) {
+      return true;
     }
 
-    return Array.from(roots);
-  }
+    if (words.length === 1 && GENERIC_NON_CAPTION_LABELS.has(words[0])) {
+      return true;
+    }
 
-  // ==================== OBSERVER ====================
-
-  /**
-   * Sets up a MutationObserver on the caption container to detect new/changed captions.
-   */
-  function attachObserver(container) {
-    if (observer) observer.disconnect();
-
-    captionContainer = container;
-
-    observer = new MutationObserver((mutations) => {
-      if (!isActive || !captionCallback) return;
-
-      // Debounce: only process if there's actual new content
-      const currentText = container.innerText.trim();
-      if (currentText === lastCaptionText) return;
-      lastCaptionText = currentText;
-
-      const captions = extractCaptionData(container);
-      for (const cap of captions) {
-        if (cap.speaker) lastSpeaker = cap.speaker;
-        captionCallback({
-          speaker: cap.speaker,
-          text: cap.text,
-          partial: true, // Meet captions update in-place, treat as partial until they disappear
-        });
-      }
-    });
-
-    observer.observe(container, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
-
-    console.log('[SignFlow CaptionScraper] Observer attached to caption container');
-  }
-
-  /**
-   * Polls for the caption container until it appears.
-   * Meet may not render captions until the user enables CC.
-   */
-  function startPolling() {
-    if (pollIntervalId) return;
-
-    pollIntervalId = setInterval(() => {
-      if (!isActive) {
-        clearInterval(pollIntervalId);
-        pollIntervalId = null;
-        return;
-      }
-
-      const container = findCaptionContainer();
-      if (container && container !== captionContainer) {
-        attachObserver(container);
-      } else if (!container && captionContainer) {
-        // Captions were turned off
-        captionContainer = null;
-        lastCaptionText = '';
-        if (observer) observer.disconnect();
-      }
-    }, 2000);
-  }
-
-  // ==================== ENABLE CAPTIONS HELPER ====================
-
-  /**
-   * Attempts to programmatically enable Google Meet's built-in captions
-   * by finding and clicking the CC button.
-   * Returns true if the button was found and clicked.
-   */
-  function tryEnableMeetCaptions() {
-    // Strategy 1: aria-label based (most reliable)
-    const buttons = document.querySelectorAll('button[aria-label]');
-    for (const btn of buttons) {
-      const label = (btn.getAttribute('aria-label') || '').toLowerCase();
-      if (
-        label.includes('caption') ||
-        label.includes('subtitle') ||
-        label.includes('closed caption') ||
-        label.includes('cc')
-      ) {
-        // Check if captions are currently OFF (button not pressed)
-        const pressed = btn.getAttribute('aria-pressed');
-        if (pressed !== 'true') {
-          btn.click();
-          console.log('[SignFlow CaptionScraper] Auto-enabled Meet captions');
-          return true;
-        } else {
-          console.log('[SignFlow CaptionScraper] Meet captions already enabled');
+    if (words.length >= 2) {
+      const uniqueWords = new Set(words);
+      if (uniqueWords.size === 1) {
+        const repeatedWord = words[0];
+        if (repeatedWord === normalizedSpeaker || GENERIC_NON_CAPTION_LABELS.has(repeatedWord)) {
           return true;
         }
-      }
-    }
-
-    // Strategy 2: data-tooltip based
-    const allButtons = document.querySelectorAll('button');
-    for (const btn of allButtons) {
-      const tooltip = (btn.getAttribute('data-tooltip') || '').toLowerCase();
-      if (tooltip.includes('caption') || tooltip.includes('subtitle')) {
-        btn.click();
-        console.log('[SignFlow CaptionScraper] Auto-enabled Meet captions via tooltip');
-        return true;
       }
     }
 
     return false;
   }
 
-  /**
-   * Check if Meet captions appear to be currently active.
-   */
-  function areCaptionsActive() {
-    return captionContainer !== null && captionContainer.offsetHeight > 0;
+  function scoreContainer(el) {
+    if (!el) return -Infinity;
+    const rect = el.getBoundingClientRect();
+    const text = normalizeText(el.innerText || el.textContent || '');
+    const className = (el.className || '').toString().toLowerCase();
+    const areaRatio = (rect.width * rect.height) / Math.max(window.innerWidth * window.innerHeight, 1);
+    let score = 0;
+
+    if (containsBridgeSignUi(el)) return -Infinity;
+    if (areaRatio > 0.45) return -Infinity;
+
+    if (el.matches('div.a4cQT, div.TBMuR.bj4p3b')) score += 60;
+    if (el.matches('div[aria-live="polite"], div[aria-live="assertive"]')) score += 35;
+    if (el.matches('div[role="log"], div[role="status"]')) score += 25;
+    if (className.includes('caption') || className.includes('subtitle')) score += 20;
+    if (rect.bottom > window.innerHeight * 0.55) score += 15;
+    if (rect.height >= 18 && rect.height <= 220) score += 10;
+    if (text.length >= 2 && text.length <= 220) score += 10;
+    return score;
   }
 
-  // ==================== PUBLIC API ====================
+  function closestCaptionBubble(el) {
+    let node = el;
+    for (let depth = 0; node && depth < 6; depth += 1) {
+      if (node.nodeType === Node.ELEMENT_NODE && isVisible(node)) {
+        const score = scoreContainer(node);
+        if (score > 15) {
+          return node;
+        }
+      }
+      node = node.parentElement;
+    }
+    return el && el.parentElement ? el.parentElement : el;
+  }
 
-  /**
-   * Start scraping Meet captions.
-   * @param {Function} callback - Called with { speaker, text, partial } for each caption update.
-   * @param {Object} options - { autoEnable: boolean } whether to auto-click the CC button.
-   * @returns {{ active: boolean, captionsDetected: boolean }}
-   */
+  function findCaptionContainers() {
+    const candidates = new Set();
+
+    for (const selector of CAPTION_CONTAINER_SELECTORS) {
+      document.querySelectorAll(selector).forEach((el) => {
+        if (isVisible(el) && !isBridgeSignUiElement(el) && !containsBridgeSignUi(el)) candidates.add(el);
+      });
+    }
+
+    document.querySelectorAll(SPEAKER_SELECTORS.join(',')).forEach((speakerEl) => {
+      if (!isVisible(speakerEl) || isBridgeSignUiElement(speakerEl)) return;
+      const bubble = closestCaptionBubble(speakerEl);
+      if (bubble && isVisible(bubble) && !isBridgeSignUiElement(bubble) && !containsBridgeSignUi(bubble)) {
+        candidates.add(bubble);
+      }
+    });
+
+    const sorted = Array.from(candidates)
+      .filter((el) => normalizeText(el.innerText || el.textContent || '').length > 0)
+      .sort((a, b) => {
+        const scoreDelta = scoreContainer(b) - scoreContainer(a);
+        if (scoreDelta !== 0) return scoreDelta;
+        const areaA = a.getBoundingClientRect().width * a.getBoundingClientRect().height;
+        const areaB = b.getBoundingClientRect().width * b.getBoundingClientRect().height;
+        return areaA - areaB;
+      });
+
+    const filtered = [];
+    for (const candidate of sorted) {
+      const text = normalizeText(candidate.innerText || candidate.textContent || '');
+      const duplicateAncestor = filtered.some((kept) =>
+        kept.contains(candidate) && normalizeText(kept.innerText || kept.textContent || '') === text
+      );
+      const duplicateDescendant = filtered.some((kept) =>
+        candidate.contains(kept) && normalizeText(kept.innerText || kept.textContent || '') === text
+      );
+      if (!duplicateAncestor && !duplicateDescendant) {
+        filtered.push(candidate);
+      }
+    }
+
+    captionContainer = filtered[0] || null;
+    return filtered.slice(0, 6);
+  }
+
+  function extractStructuredCaptions(container) {
+    if (containsBridgeSignUi(container)) return [];
+
+    const results = [];
+    const seen = new Set();
+
+    for (const selector of SPEAKER_SELECTORS) {
+      const speakerEls = container.querySelectorAll(selector);
+      for (const speakerEl of speakerEls) {
+        if (!isVisible(speakerEl) || isBridgeSignUiElement(speakerEl)) continue;
+        const speaker = normalizeText(speakerEl.textContent);
+        if (!speaker || speaker.length > 40) continue;
+
+        const bubble = closestCaptionBubble(speakerEl);
+        if (bubble && isBridgeSignUiElement(bubble)) continue;
+        let text = '';
+
+        for (const textSelector of TEXT_SELECTORS) {
+          const textEls = bubble ? bubble.querySelectorAll(textSelector) : [];
+          const pieces = Array.from(textEls)
+            .filter((el) => isVisible(el))
+            .map((el) => normalizeText(el.textContent))
+            .filter((value) => value && value !== speaker);
+
+          if (pieces.length) {
+            text = pieces.join(' ');
+            break;
+          }
+        }
+
+        if (!text && bubble) {
+          const lines = (bubble.innerText || '')
+            .split('\n')
+            .map((line) => normalizeText(line))
+            .filter(Boolean);
+          if (lines.length >= 2) {
+            const withoutSpeaker = lines.filter((line) => line !== speaker);
+            text = withoutSpeaker.join(' ');
+          }
+        }
+
+        const normalizedText = normalizeText(text);
+        const key = `${speaker}::${normalizedText}`;
+        if (!normalizedText || isSystemAnnouncement(normalizedText) || looksLikeInvalidCaptionText(speaker, normalizedText) || seen.has(key)) continue;
+
+        seen.add(key);
+        results.push({ speaker, text: normalizedText });
+      }
+    }
+
+    return results;
+  }
+
+  function extractFallbackCaptions(container) {
+    if (isBridgeSignUiElement(container) || containsBridgeSignUi(container)) return [];
+
+    const text = normalizeText(container.innerText || container.textContent || '');
+    if (!text || isSystemAnnouncement(text)) return [];
+
+    const lines = text
+      .split('\n')
+      .map((line) => normalizeText(line))
+      .filter(Boolean);
+
+    if (!lines.length) return [];
+
+    if (lines.length >= 2 && lines[0].length <= 40) {
+      const speaker = lines[0];
+      const content = normalizeText(lines.slice(1).join(' '));
+      if (!content || isSystemAnnouncement(content) || looksLikeInvalidCaptionText(speaker, content)) return [];
+      return [{ speaker, text: content }];
+    }
+
+    const fallbackSpeaker = lastSpeaker || 'Speaker';
+    const fallbackText = lines.join(' ');
+    if (looksLikeInvalidCaptionText(fallbackSpeaker, fallbackText)) return [];
+    return [{ speaker: fallbackSpeaker, text: fallbackText }];
+  }
+
+  function collectCaptions() {
+    const containers = findCaptionContainers();
+    const results = [];
+    const seen = new Set();
+
+    for (const container of containers) {
+      const extracted = extractStructuredCaptions(container);
+      const captions = extracted.length ? extracted : extractFallbackCaptions(container);
+
+      for (const caption of captions) {
+        const speaker = normalizeText(caption.speaker || lastSpeaker || 'Speaker');
+        const text = normalizeText(caption.text);
+        const key = `${speaker.toLowerCase()}::${text.toLowerCase()}`;
+        if (!text || isSystemAnnouncement(text) || looksLikeInvalidCaptionText(speaker, text) || seen.has(key)) continue;
+        seen.add(key);
+        results.push({ speaker, text });
+      }
+    }
+
+    return results;
+  }
+
+  function emitCaptions(captions) {
+    if (!captionCallback || !captions.length) return;
+
+    const now = Date.now();
+    for (const [key, ts] of recentlyEmitted.entries()) {
+      if (now - ts > 2500) {
+        recentlyEmitted.delete(key);
+      }
+    }
+
+    for (const caption of captions) {
+      const key = `${caption.speaker.toLowerCase()}::${caption.text.toLowerCase()}`;
+      if (recentlyEmitted.has(key)) continue;
+
+      recentlyEmitted.set(key, now);
+      lastSpeaker = caption.speaker || lastSpeaker;
+      captionsSeenAt = now;
+      console.log('[BridgeSign][scraper] Caption emitted', caption);
+      captionCallback({
+        speaker: caption.speaker,
+        text: caption.text,
+        partial: true,
+      });
+    }
+  }
+
+  function processCaptionsNow() {
+    if (!isActive) return;
+    const captions = collectCaptions();
+    if (captions.length) {
+      emitCaptions(captions);
+    }
+  }
+
+  function scheduleProcess() {
+    if (!isActive) return;
+    if (processTimer) return;
+    processTimer = window.setTimeout(() => {
+      processTimer = null;
+      processCaptionsNow();
+    }, 120);
+  }
+
+  function attachObserver() {
+    if (pageObserver) {
+      pageObserver.disconnect();
+      pageObserver = null;
+    }
+
+    const root = document.body || document.documentElement;
+    if (!root) return;
+
+    pageObserver = new MutationObserver(() => {
+      scheduleProcess();
+    });
+
+    pageObserver.observe(root, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'aria-live', 'aria-hidden'],
+    });
+
+    console.log('[BridgeSign][scraper] Page observer attached');
+  }
+
+  function startPolling() {
+    if (pollIntervalId) return;
+
+    pollIntervalId = window.setInterval(() => {
+      if (!isActive) {
+        clearInterval(pollIntervalId);
+        pollIntervalId = null;
+        return;
+      }
+
+      processCaptionsNow();
+
+      const staleForMs = Date.now() - captionsSeenAt;
+      if (staleForMs > 4000) {
+        tryEnableMeetCaptions();
+      }
+    }, 2000);
+  }
+
+  function tryEnableMeetCaptions() {
+    const buttons = document.querySelectorAll('button, div[role="button"]');
+    for (const btn of buttons) {
+      const label = normalizeText(
+        btn.getAttribute('aria-label') ||
+        btn.getAttribute('data-tooltip') ||
+        btn.textContent
+      ).toLowerCase();
+
+      if (!label) continue;
+      if (
+        !label.includes('caption') &&
+        !label.includes('subtitle') &&
+        !label.includes('closed caption') &&
+        label !== 'cc'
+      ) {
+        continue;
+      }
+
+      const pressed = btn.getAttribute('aria-pressed');
+      if (pressed === 'true') {
+        console.log('[BridgeSign][scraper] Meet captions already enabled');
+        return true;
+      }
+
+      btn.click();
+      console.log('[BridgeSign][scraper] Auto-enabled Meet captions');
+      return true;
+    }
+
+    return false;
+  }
+
+  function areCaptionsActive() {
+    if (captionContainer && isVisible(captionContainer)) {
+      return true;
+    }
+    return Date.now() - captionsSeenAt < 5000;
+  }
+
   function start(callback, options = {}) {
-    if (isActive) return { active: true, captionsDetected: areCaptionsActive() };
+    console.log('[BridgeSign][scraper] start called', { options, alreadyActive: isActive });
+    if (isActive) {
+      return { active: true, captionsDetected: areCaptionsActive() };
+    }
 
     captionCallback = callback;
     isActive = true;
-    lastCaptionText = '';
     lastSpeaker = '';
+    captionsSeenAt = 0;
+    recentlyEmitted.clear();
 
-    // Try to find the caption container immediately
-    const container = findCaptionContainer();
-    if (container) {
-      attachObserver(container);
-    } else if (options.autoEnable !== false) {
-      // Try to enable Meet captions
+    attachObserver();
+    processCaptionsNow();
+
+    if (!areCaptionsActive() && options.autoEnable !== false) {
       tryEnableMeetCaptions();
     }
 
-    // Start polling for container (in case captions are enabled later)
     startPolling();
-
-    return { active: true, captionsDetected: !!container };
+    return { active: true, captionsDetected: areCaptionsActive() };
   }
 
-  /**
-   * Stop scraping.
-   */
   function stop() {
+    console.log('[BridgeSign][scraper] stop called');
     isActive = false;
 
-    if (observer) {
-      observer.disconnect();
-      observer = null;
+    if (pageObserver) {
+      pageObserver.disconnect();
+      pageObserver = null;
     }
 
     if (pollIntervalId) {
@@ -299,17 +497,18 @@ const MeetCaptionScraper = (() => {
       pollIntervalId = null;
     }
 
-    captionContainer = null;
-    captionCallback = null;
-    lastCaptionText = '';
-    lastSpeaker = '';
+    if (processTimer) {
+      clearTimeout(processTimer);
+      processTimer = null;
+    }
 
-    console.log('[SignFlow CaptionScraper] Stopped');
+    captionCallback = null;
+    captionContainer = null;
+    lastSpeaker = '';
+    captionsSeenAt = 0;
+    recentlyEmitted.clear();
   }
 
-  /**
-   * Returns whether the scraper is currently active.
-   */
   function isRunning() {
     return isActive;
   }
@@ -317,7 +516,6 @@ const MeetCaptionScraper = (() => {
   return { start, stop, isRunning, areCaptionsActive, tryEnableMeetCaptions };
 })();
 
-// Export for content script
 if (typeof window !== 'undefined') {
   window.MeetCaptionScraper = MeetCaptionScraper;
 }

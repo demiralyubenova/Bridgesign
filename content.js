@@ -40,6 +40,94 @@
     console.log(`[BridgeSign][content] ${message}`, details);
   }
 
+  function getChromeRuntime() {
+    try {
+      return typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function getChromeStorageArea(areaName) {
+    try {
+      return typeof chrome !== 'undefined' && chrome.storage && chrome.storage[areaName]
+        ? chrome.storage[areaName]
+        : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function describeChromeError(error) {
+    if (!error) return 'Unknown error';
+    if (typeof error === 'string') return error;
+    if (error && error.message) return error.message;
+    return String(error);
+  }
+
+  function isExtensionContextInvalidated(error) {
+    return /Extension context invalidated/i.test(describeChromeError(error));
+  }
+
+  function safeStorageGet(areaName, keys, fallback = {}) {
+    return new Promise((resolve) => {
+      const area = getChromeStorageArea(areaName);
+      if (!area || typeof area.get !== 'function') {
+        contentLog(`Storage.${areaName}.get unavailable`, { keys });
+        resolve(fallback);
+        return;
+      }
+
+      try {
+        area.get(keys, (result) => {
+          resolve(result || fallback);
+        });
+      } catch (error) {
+        console.warn(`[BridgeSign] Failed to read chrome.storage.${areaName}:`, error);
+        resolve(fallback);
+      }
+    });
+  }
+
+  function safeStorageSet(areaName, values) {
+    return new Promise((resolve) => {
+      const area = getChromeStorageArea(areaName);
+      if (!area || typeof area.set !== 'function') {
+        contentLog(`Storage.${areaName}.set unavailable`, { keys: Object.keys(values || {}) });
+        resolve(false);
+        return;
+      }
+
+      try {
+        area.set(values, () => resolve(true));
+      } catch (error) {
+        console.warn(`[BridgeSign] Failed to write chrome.storage.${areaName}:`, error);
+        resolve(false);
+      }
+    });
+  }
+
+  function safeRuntimeSendMessage(message, callback) {
+    const runtime = getChromeRuntime();
+    if (!runtime || typeof runtime.sendMessage !== 'function') {
+      contentLog('Runtime.sendMessage unavailable', { type: message && message.type });
+      if (callback) callback(null, new Error('Runtime unavailable'));
+      return false;
+    }
+
+    try {
+      runtime.sendMessage(message, (response) => {
+        const error = runtime.lastError || null;
+        if (callback) callback(response, error);
+      });
+      return true;
+    } catch (error) {
+      console.warn('[BridgeSign] Failed to send runtime message:', error);
+      if (callback) callback(null, error);
+      return false;
+    }
+  }
+
   // ==================== COMPONENT: VoiceToolbar ====================
   class VoiceToolbar {
     constructor({ container, sessionId = '...', userName = 'SF' } = {}) {
@@ -308,20 +396,57 @@
   }
 
   // ==================== RECOGNITION CALLS ====================
-  const port = chrome.runtime.connect({ name: 'bridgesign' });
+  let port = null;
 
   function sendPortMessage(message) {
+    const activePort = ensurePort();
+    if (!activePort) {
+      console.warn('[BridgeSign] Failed to send message to background: Extension runtime unavailable.');
+      return false;
+    }
+
     try {
       contentLog('Sending port message', message);
-      port.postMessage(message);
+      activePort.postMessage(message);
       return true;
     } catch (error) {
       console.warn('[BridgeSign] Failed to send message to background:', error);
+      if (isExtensionContextInvalidated(error)) {
+        port = null;
+      }
       return false;
     }
   }
 
-  port.onMessage.addListener((msg) => {
+  function ensurePort() {
+    if (port) return port;
+
+    const runtime = getChromeRuntime();
+    if (!runtime || typeof runtime.connect !== 'function') {
+      return null;
+    }
+
+    try {
+      port = runtime.connect({ name: 'bridgesign' });
+      port.onMessage.addListener(handlePortMessage);
+      port.onDisconnect.addListener(() => {
+        const disconnectError = runtime.lastError;
+        if (disconnectError) {
+          contentLog('Background port disconnected', {
+            error: describeChromeError(disconnectError),
+          });
+        }
+        port = null;
+      });
+      return port;
+    } catch (error) {
+      console.warn('[BridgeSign] Failed to connect to background:', error);
+      port = null;
+      return null;
+    }
+  }
+
+  function handlePortMessage(msg) {
     contentLog('Received background message', { type: msg.type, data: msg.data });
     switch (msg.type) {
       case 'STATE_UPDATE':
@@ -353,7 +478,7 @@
       case 'PEER_JOINED': showNotification(`Peer joined as ${msg.data.role}`); break;
       case 'PEER_LEFT': showNotification('Peer disconnected'); break;
     }
-  });
+  }
 
   // ==================== CORE FUNCTIONS ====================
   function injectUI() {
@@ -397,8 +522,9 @@
   }
 
   function shouldRequestPlanner(text) {
-    const normalized = normalizeTranscriptText(text);
-    if (!normalized) return false;
+    const plannerText = sanitizePlannerText(text);
+    const normalized = normalizeTranscriptText(plannerText);
+    if (!normalized || !plannerText) return false;
 
     const cutoff = Date.now() - 2500;
     state.recentPlannerRequests = state.recentPlannerRequests.filter((entry) => entry.ts >= cutoff);
@@ -409,6 +535,13 @@
 
     state.recentPlannerRequests.push({ text: normalized, ts: Date.now() });
     return true;
+  }
+
+  function sanitizePlannerText(text) {
+    const sanitized = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!sanitized) return '';
+    if (!/[A-Za-z0-9]/.test(sanitized)) return '';
+    return sanitized.slice(0, 240).trim();
   }
 
   function shouldEnqueueManifest(text) {
@@ -427,34 +560,36 @@
   }
 
   function getPlannerCandidates() {
-    return new Promise((resolve) => {
-      chrome.storage.sync.get(['bridgesignPlannerUrl', 'signflowPlannerUrl'], (res) => {
-        const savedPlannerUrl = (res.bridgesignPlannerUrl || res.signflowPlannerUrl || '').trim();
-        const candidates = Array.from(new Set([
-          savedPlannerUrl,
-          'http://localhost:8001',
-          'http://127.0.0.1:8001',
-        ].filter(Boolean).map((url) => url.replace(/\/$/, ''))));
-        resolve(candidates);
-      });
+    return safeStorageGet('sync', ['bridgesignPlannerUrl', 'signflowPlannerUrl']).then((res) => {
+      const savedPlannerUrl = (res.bridgesignPlannerUrl || res.signflowPlannerUrl || '').trim();
+      return Array.from(new Set([
+        savedPlannerUrl,
+        'http://localhost:8001',
+        'http://127.0.0.1:8001',
+      ].filter(Boolean).map((url) => url.replace(/\/$/, ''))));
     });
   }
 
   async function fetchSignPlanLocally(text) {
+    const plannerText = sanitizePlannerText(text);
+    if (!plannerText) {
+      throw new Error('Planner text is empty or invalid');
+    }
+
     const plannerCandidates = await getPlannerCandidates();
-    contentLog('Local planner candidates prepared', { text, plannerCandidates });
+    contentLog('Local planner candidates prepared', { text: plannerText, plannerCandidates });
     let lastError = null;
 
     for (const plannerUrl of plannerCandidates) {
       try {
-        contentLog('Trying local planner candidate', { text, plannerUrl });
+        contentLog('Trying local planner candidate', { text: plannerText, plannerUrl });
         const response = await fetch(`${plannerUrl}/api/sign-plan`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            text,
+            text: plannerText,
             sign_language: 'ASL',
           }),
         });
@@ -465,19 +600,19 @@
 
         const signPlan = await response.json();
         contentLog('Local planner returned sign plan', {
-          text,
+          text: plannerText,
           plannerUrl,
           mode: signPlan.mode,
           units: Array.isArray(signPlan.units) ? signPlan.units.map((unit) => unit.id) : [],
         });
         if (plannerUrl === 'http://localhost:8001' || plannerUrl === 'http://127.0.0.1:8001') {
-          chrome.storage.sync.set({ bridgesignPlannerUrl: 'http://localhost:8001' });
+          void safeStorageSet('sync', { bridgesignPlannerUrl: 'http://localhost:8001' });
         }
         return signPlan;
       } catch (error) {
         lastError = error;
         contentLog('Local planner candidate failed', {
-          text,
+          text: plannerText,
           plannerUrl,
           error: error && error.message ? error.message : error,
         });
@@ -511,18 +646,19 @@
   }
 
   async function requestLocalSignPlan(text) {
-    if (state.role !== 'signer' || !window.SignPlayer || !shouldRequestPlanner(text)) {
+    const plannerText = sanitizePlannerText(text);
+    if (state.role !== 'signer' || !window.SignPlayer || !plannerText || !shouldRequestPlanner(plannerText)) {
       contentLog('Skipping local planner request', {
         role: state.role,
         hasPlayer: Boolean(window.SignPlayer),
-        text,
+        text: plannerText || text,
       });
       return;
     }
 
     try {
-      contentLog('Requesting local sign plan from signer tab', { text });
-      const signPlan = await fetchSignPlanLocally(text);
+      contentLog('Requesting local sign plan from signer tab', { text: plannerText });
+      const signPlan = await fetchSignPlanLocally(plannerText);
       enqueueIncomingSignPlan(signPlan);
     } catch (error) {
       console.warn('[BridgeSign] Failed to fetch sign plan in signer tab:', error && error.message ? error.message : error);
@@ -584,8 +720,8 @@
     relayWarningTimer = window.setTimeout(() => {
       relayWarningTimer = null;
 
-      chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (status) => {
-        if (chrome.runtime.lastError || !status || !state.role || !state.roomId) {
+      safeRuntimeSendMessage({ type: 'GET_STATUS' }, (status, runtimeError) => {
+        if (runtimeError || !status || !state.role || !state.roomId) {
           return;
         }
 
@@ -707,7 +843,7 @@
 
       overlay.querySelector('#ob-next').addEventListener('click', () => {
         if (isLast) {
-          chrome.storage.local.set({ bridgesignOnboarded: true });
+          void safeStorageSet('local', { bridgesignOnboarded: true });
           overlay.remove();
           onComplete();
         } else {
@@ -718,7 +854,7 @@
 
       if (isFirst) {
         overlay.querySelector('#ob-skip').addEventListener('click', () => {
-          chrome.storage.local.set({ bridgesignOnboarded: true });
+          void safeStorageSet('local', { bridgesignOnboarded: true });
           overlay.remove();
           onComplete();
         });
@@ -770,7 +906,7 @@
   }
 
   function injectUI() {
-    chrome.storage.local.get('bridgesignOnboarded', (res) => {
+    safeStorageGet('local', 'bridgesignOnboarded').then((res) => {
       if (res.bridgesignOnboarded) {
         showRoleSelector();
       } else {
@@ -844,7 +980,7 @@
       });
     }
 
-    chrome.storage.local.set({ bridgesignRole: state.role });
+    await safeStorageSet('local', { bridgesignRole: state.role });
 
     // Init Draggable Dashboard
     initDraggable(root, document.getElementById('sf-drag-handle'));
@@ -872,7 +1008,7 @@
     }
 
     // Load settings
-    chrome.storage.local.get(['sfSettings', 'overlayPos'], (res) => {
+    safeStorageGet('local', ['sfSettings', 'overlayPos']).then((res) => {
       if (res.sfSettings) updateSettings(res.sfSettings);
       if (res.overlayPos) {
         root.style.top = res.overlayPos.top;
@@ -891,7 +1027,7 @@
       root.style.setProperty('--sf-bg-opacity', state.settings.opacity);
       root.style.setProperty('--sf-caption-color', state.settings.textColor);
     }
-    chrome.storage.local.set({ sfSettings: state.settings });
+    void safeStorageSet('local', { sfSettings: state.settings });
   }
 
   function switchRole() {
@@ -1145,7 +1281,7 @@
       px = e.clientX; py = e.clientY;
       document.onmouseup = () => {
         document.onmouseup = null; document.onmousemove = null;
-        chrome.storage.local.set({ overlayPos: { top: el.style.top, left: el.style.left } });
+        void safeStorageSet('local', { overlayPos: { top: el.style.top, left: el.style.left } });
       };
       document.onmousemove = (e) => {
         e.preventDefault();

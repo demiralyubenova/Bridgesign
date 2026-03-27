@@ -49,7 +49,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["models/*", "libs/*"],
+      "resources": ["models/*", "libs/*", "assets/*"],
       "matches": ["https://meet.google.com/*"]
     }
   ],

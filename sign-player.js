@@ -4,108 +4,42 @@
 const SignPlayer = (() => {
   'use strict';
 
-  const UNIT_EMOJI_MAP = {
-    'HELLO': '👋',
-    'GOODBYE': '👋',
-    'GOOD-MORNING': '🌅',
-    'GOOD-AFTERNOON': '☀️',
-    'GOOD-EVENING': '🌆',
-    'THANK-YOU': '🙏',
-    'THANK-YOU-TIME': '🙏🕒',
-    'PLEASE': '🤲',
-    'PLEASE-WAIT': '✋⏳',
-    'WAIT': '✋',
-    'STOP': '🛑',
-    'YES': '👍',
-    'NO': '👎',
-    'MAYBE': '🤷',
-    'OKAY': '👌',
-    'WELCOME': '🤗',
-    'SORRY': '😔',
-    'EXCUSE-ME': '🙋',
-    'I-UNDERSTAND': '🧠✅',
-    'I-DO-NOT-UNDERSTAND': '🧠❌',
-    'CAN-YOU-REPEAT-THAT': '🔁❓',
-    'PLEASE-REPEAT-THAT': '🤲🔁',
-    'PLEASE-SLOW-DOWN': '🤲🐢',
-    'PLEASE-SPEAK-SLOWLY': '🤲🗣️🐢',
-    'PLEASE-SIGN-SLOWLY': '🤲🤟🐢',
-    'I-NEED-HELP': '🆘',
-    'CAN-YOU-HELP-ME': '❓🤝',
-    'YOU-NEED-HELP': '👉🆘',
-    'EMERGENCY': '🚨',
-    'CALL-911': '📞🚨',
-    'WHAT-YOUR-NAME': '❓🪪',
-    'MY-NAME': '🙋🪪',
-    'WHAT-TIME': '❓🕒',
-    'MEETING-START-NOW': '🎬🕒',
-    'MEETING-FINISH': '🏁',
-    'START': '▶️',
-    'CAN-WE-START': '❓▶️',
-    'PLEASE-JOIN-MEETING': '🤲👥',
-    'PLEASE-CHECK-CHAT': '🤲💬',
-    'PLEASE-WRITE-DOWN': '🤲✍️',
-    'PLEASE-TYPE-CHAT': '🤲⌨️💬',
-    'YOU-UNDERSTAND': '👉🧠✅',
-    'YOU-READY': '👉✅',
-    'I-READY': '✅',
-    'I-NOT-READY': '❌',
-    'I-LATE': '⏰',
-    'I-EARLY': '⏱️',
-    'AUDIO-NOT-WORK': '🔇❌',
-    'VIDEO-NOT-WORK': '📹❌',
-    'CONNECTION-BAD': '📶❌',
-    'INTERNET-SLOW': '🌐🐢',
-    'CAN-YOU-REJOIN': '🔄❓',
-    'PLEASE-REJOIN': '🤲🔄',
-    'ONE-SECOND': '1️⃣',
-    'ONE-MINUTE': '1️⃣⏱️',
-    'SEE-YOU-LATER': '👋⏭️',
-    'SEE-YOU-TOMORROW': '👋🌤️',
-    'GOOD-JOB': '👏',
-    'GOOD-WORK': '👏💼',
-    'CAN-YOU-SEE-ME': '👀❓',
-    'CAN-YOU-HEAR-ME': '👂❓',
-    'WHAT-DAY-TODAY': '❓📅',
-    'TODAY-MONDAY': '📅1',
-    'TODAY-TUESDAY': '📅2',
-    'TODAY-WEDNESDAY': '📅3',
-    'TODAY-THURSDAY': '📅4',
-    'TODAY-FRIDAY': '📅5',
-    'TODAY-SATURDAY': '📅6',
-    'TODAY-SUNDAY': '📅7',
-  };
+  const ASL_ALPHABET_CHART_URL = typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL
+    ? chrome.runtime.getURL('assets/asl-alphabet-chart.png')
+    : '';
 
-  const FINGERSPELL_EMOJI_MAP = {
-    A: '✊',
-    B: '✋',
-    C: '🤏',
-    D: '☝️',
-    E: '✊',
-    F: '👌',
-    G: '👉',
-    H: '✌️',
-    I: '🤙',
-    J: '🤙',
-    K: '✌️',
-    L: '🤘',
-    M: '✊',
-    N: '✊',
-    O: '🫶',
-    P: '👇',
-    Q: '👇',
-    R: '🤞',
-    S: '👊',
-    T: '👍',
-    U: '✌️',
-    V: '✌️',
-    W: '🖖',
-    X: '☝️',
-    Y: '🤙',
-    Z: '☝️',
+  const ASL_FINGERSPELL_TILE_MAP = {
+    A: { col: 0, row: 0 },
+    B: { col: 1, row: 0 },
+    C: { col: 2, row: 0 },
+    D: { col: 3, row: 0 },
+    E: { col: 4, row: 0 },
+    F: { col: 5, row: 0 },
+    G: { col: 6, row: 0 },
+    H: { col: 0, row: 1 },
+    I: { col: 1, row: 1 },
+    J: { col: 2, row: 1 },
+    K: { col: 3, row: 1 },
+    L: { col: 4, row: 1 },
+    M: { col: 5, row: 1 },
+    N: { col: 6, row: 1 },
+    O: { col: 0, row: 2 },
+    P: { col: 1, row: 2 },
+    Q: { col: 2, row: 2 },
+    R: { col: 3, row: 2 },
+    S: { col: 4, row: 2 },
+    T: { col: 5, row: 2 },
+    U: { col: 6, row: 2 },
+    V: { col: 0, row: 3 },
+    W: { col: 1, row: 3 },
+    X: { col: 2, row: 3 },
+    Y: { col: 3, row: 3 },
+    Z: { col: 4, row: 3 },
   };
 
   const state = {
+    aslChartAvailable: null,
+    aslChartPromise: null,
     queue: [],
     currentManifest: null,
     currentPlaybackToken: 0,
@@ -147,6 +81,7 @@ const SignPlayer = (() => {
     state.lastCompletedManifest = null;
     state.refs = refs;
     state.mounted = true;
+    ensureAslChartAvailability();
     setVisible(false);
     updateStatus('Waiting for ASL plan');
     updateQueue([]);
@@ -204,15 +139,18 @@ const SignPlayer = (() => {
     if (!state.refs || !state.refs.unitList) return;
 
     if (!units.length) {
-      state.refs.unitList.innerHTML = '<div class="sf-sign-placeholder">ASL clips or emoji signs will appear here for finalized speech.</div>';
+      state.refs.unitList.innerHTML = '<div class="sf-sign-placeholder">ASL clips, spelled letters, or fallback words will appear here for finalized speech.</div>';
       return;
     }
 
     state.refs.unitList.innerHTML = units.map((unit) => {
       const presentation = getUnitPresentation(unit);
+      const markerHtml = presentation.glyphStyle
+        ? `<span class="sf-sign-chip-glyph" style="${presentation.glyphStyle}" aria-hidden="true"></span>`
+        : `<span class="sf-sign-chip-badge">${escapeHtml(presentation.badge)}</span>`;
       return `
-        <div class="sf-sign-chip">
-          <span class="sf-sign-chip-emoji">${escapeHtml(presentation.emoji)}</span>
+        <div class="sf-sign-chip ${presentation.chipClass}">
+          ${markerHtml}
           <span>${escapeHtml(presentation.label)}</span>
         </div>
       `;
@@ -247,7 +185,15 @@ const SignPlayer = (() => {
     state.currentManifest = manifest;
     const token = ++state.currentPlaybackToken;
     const playbackLabel = manifest.mode === 'fingerspell' ? 'Fingerspelling' : 'ASL';
-    updateStatus(`${manifest.priority === 'urgent' ? 'Urgent' : 'Playing'} ${playbackLabel} for: ${manifest.text}`);
+    const cardCount = manifest.card_count || 0;
+    const fingerspellCount = manifest.fingerspell_count || 0;
+    let fallbackSummary = '';
+    if (cardCount > 0) {
+      fallbackSummary = ` (${cardCount} word fallback${cardCount > 1 ? 's' : ''})`;
+    } else if (fingerspellCount > 0) {
+      fallbackSummary = ` (${fingerspellCount} fingerspelled)`;
+    }
+    updateStatus(`${manifest.priority === 'urgent' ? 'Urgent' : 'Playing'} ${playbackLabel} for: ${manifest.text}${fallbackSummary}`);
     updateQueue(manifest.units);
 
     for (const unit of manifest.units) {
@@ -298,7 +244,7 @@ const SignPlayer = (() => {
 
       const presentation = getUnitPresentation(unit);
       if (state.refs && state.refs.label) {
-        state.refs.label.textContent = `${presentation.emoji} ${presentation.label}`;
+        state.refs.label.textContent = presentation.currentLabel;
       }
 
       if (unit.url && state.refs && state.refs.video) {
@@ -330,12 +276,29 @@ const SignPlayer = (() => {
   function showFallbackCard(unit) {
     if (!state.refs || !state.refs.fallbackCard) return;
     const presentation = getUnitPresentation(unit);
-    state.refs.fallbackCard.innerHTML = `
-      <div class="sf-sign-fallback-inner">
-        <div class="sf-sign-fallback-emoji">${escapeHtml(presentation.emoji)}</div>
-        <div class="sf-sign-fallback-text">${escapeHtml(presentation.label)}</div>
-      </div>
-    `;
+    state.refs.fallbackCard.classList.toggle('is-word-card', presentation.kind === 'word');
+    state.refs.fallbackCard.classList.toggle('is-fingerspell-card', presentation.kind === 'fingerspell');
+    state.refs.fallbackCard.innerHTML = presentation.kind === 'fingerspell' && presentation.glyphStyle
+      ? `
+        <div class="sf-sign-fallback-inner sf-sign-fallback-inner-word">
+          <div class="sf-sign-fallback-kicker">${escapeHtml(presentation.kicker)}</div>
+          <div class="sf-sign-fallback-glyph" style="${presentation.glyphStyle}" aria-hidden="true"></div>
+          <div class="sf-sign-fallback-text sf-sign-fallback-text-word">${escapeHtml(presentation.label)}</div>
+        </div>
+      `
+      : (presentation.kind === 'word' || presentation.kind === 'fingerspell')
+      ? `
+        <div class="sf-sign-fallback-inner sf-sign-fallback-inner-word">
+          <div class="sf-sign-fallback-kicker">${escapeHtml(presentation.kicker)}</div>
+          <div class="sf-sign-fallback-text sf-sign-fallback-text-word">${escapeHtml(presentation.label)}</div>
+        </div>
+      `
+      : `
+        <div class="sf-sign-fallback-inner sf-sign-fallback-inner-word">
+          <div class="sf-sign-fallback-kicker">${escapeHtml(presentation.kicker)}</div>
+          <div class="sf-sign-fallback-text">${escapeHtml(presentation.label)}</div>
+        </div>
+      `;
     state.refs.fallbackCard.style.display = 'flex';
     if (state.refs.video) {
       state.refs.video.style.display = 'none';
@@ -357,9 +320,11 @@ const SignPlayer = (() => {
       state.refs.unitList.innerHTML = `<div class="sf-sign-placeholder">No ASL gesture available yet for "${escapeHtml(manifest.text || 'this phrase')}".</div>`;
     }
     if (state.refs && state.refs.fallbackCard) {
+      state.refs.fallbackCard.classList.remove('is-word-card');
+      state.refs.fallbackCard.classList.remove('is-fingerspell-card');
       state.refs.fallbackCard.innerHTML = `
         <div class="sf-sign-fallback-inner">
-          <div class="sf-sign-fallback-emoji">🤷</div>
+          <div class="sf-sign-fallback-kicker">Unavailable</div>
           <div class="sf-sign-fallback-text">No ASL Gesture</div>
         </div>
       `;
@@ -368,6 +333,39 @@ const SignPlayer = (() => {
     if (state.refs && state.refs.video) {
       state.refs.video.style.display = 'none';
     }
+  }
+
+  function ensureAslChartAvailability() {
+    if (!ASL_ALPHABET_CHART_URL) {
+      state.aslChartAvailable = false;
+      return Promise.resolve(false);
+    }
+
+    if (state.aslChartAvailable !== null) {
+      return Promise.resolve(state.aslChartAvailable);
+    }
+
+    if (state.aslChartPromise) {
+      return state.aslChartPromise;
+    }
+
+    state.aslChartPromise = new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => {
+        state.aslChartAvailable = true;
+        if (state.currentManifest && Array.isArray(state.currentManifest.units)) {
+          updateQueue(state.currentManifest.units);
+        }
+        resolve(true);
+      };
+      image.onerror = () => {
+        state.aslChartAvailable = false;
+        resolve(false);
+      };
+      image.src = ASL_ALPHABET_CHART_URL;
+    });
+
+    return state.aslChartPromise;
   }
 
   function scheduleFinish(durationMs, finish) {
@@ -419,6 +417,8 @@ const SignPlayer = (() => {
     }
 
     if (state.refs && state.refs.fallbackCard) {
+      state.refs.fallbackCard.classList.remove('is-word-card');
+      state.refs.fallbackCard.classList.remove('is-fingerspell-card');
       state.refs.fallbackCard.style.display = 'none';
       state.refs.fallbackCard.innerHTML = '';
     }
@@ -427,39 +427,92 @@ const SignPlayer = (() => {
   }
 
   function getUnitPresentation(unit) {
-    const rawLabel = normalizeLabel(unit);
-    const emoji = resolveEmoji(unit, rawLabel);
+    const kind = getUnitKind(unit);
+    const rawLabel = normalizeLabel(unit, kind);
+    const glyphStyle = resolveGlyphStyle(unit, kind);
     return {
-      emoji,
+      badge: resolveBadge(unit, kind),
+      chipClass: `sf-sign-chip-${kind}`,
+      currentLabel: resolveCurrentLabel(rawLabel, kind),
+      glyphStyle,
+      kicker: resolveKicker(kind),
+      kind,
       label: rawLabel,
     };
   }
 
-  function normalizeLabel(unit) {
-    if (unit.text) {
-      return unit.text.toUpperCase();
+  function getUnitKind(unit) {
+    if (unit && unit.id && unit.id.startsWith('FS-')) {
+      return 'fingerspell';
     }
-    if (unit.id && unit.id.startsWith('FS-')) {
-      return unit.id.slice(3);
+    if (unit && unit.type === 'card' && unit.id && unit.id.startsWith('WORD-')) {
+      return 'word';
+    }
+    return 'sign';
+  }
+
+  function normalizeLabel(unit, kind) {
+    if (kind === 'fingerspell' && unit.id) {
+      return unit.id.slice(3).toUpperCase();
+    }
+    if (unit.text) {
+      if (kind === 'word') {
+        return unit.text;
+      }
+      return unit.text.toUpperCase();
     }
     return (unit.id || 'SIGN').replace(/-/g, ' ');
   }
 
-  function resolveEmoji(unit, label) {
-    if (unit.id && UNIT_EMOJI_MAP[unit.id]) {
-      return UNIT_EMOJI_MAP[unit.id];
+  function resolveBadge(unit, kind) {
+    if (kind === 'fingerspell' && unit.id) {
+      return unit.id.slice(3).toUpperCase();
     }
-    if (unit.id && unit.id.startsWith('FS-')) {
-      const letter = unit.id.slice(3).toUpperCase();
-      return FINGERSPELL_EMOJI_MAP[letter] || '🤟';
+    if (kind === 'word') {
+      return 'WORD';
     }
-    if (unit.id && unit.id.startsWith('NUM-')) {
-      return '🔢';
+    return 'SIGN';
+  }
+
+  function resolveKicker(kind) {
+    if (kind === 'fingerspell') {
+      return 'Finger Spelling';
     }
-    if (label.includes('QUESTION') || label.includes('?')) {
-      return '❓';
+    if (kind === 'word') {
+      return 'Word Fallback';
     }
-    return '🤟';
+    return 'ASL Sign';
+  }
+
+  function resolveCurrentLabel(label, kind) {
+    if (kind === 'fingerspell') {
+      return `SPELL: ${label}`;
+    }
+    if (kind === 'word') {
+      return `WORD: ${label}`;
+    }
+    return `SIGN: ${label}`;
+  }
+
+  function resolveGlyphStyle(unit, kind) {
+    if (kind !== 'fingerspell' || state.aslChartAvailable !== true || !unit || !unit.id) {
+      return '';
+    }
+
+    const letter = unit.id.slice(3).toUpperCase();
+    const tile = ASL_FINGERSPELL_TILE_MAP[letter];
+    if (!tile) {
+      return '';
+    }
+
+    const xPercent = tile.col === 0 ? 0 : (tile.col / 6) * 100;
+    const yPercent = tile.row === 0 ? 0 : (tile.row / 3) * 100;
+    return [
+      `background-image:url('${ASL_ALPHABET_CHART_URL}')`,
+      'background-repeat:no-repeat',
+      'background-size:700% 400%',
+      `background-position:${xPercent}% ${yPercent}%`,
+    ].join(';');
   }
 
   return {

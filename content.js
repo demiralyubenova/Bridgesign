@@ -393,12 +393,13 @@
     // Join room
     port.postMessage({ type: 'JOIN_ROOM', roomId: getRoomId(), role: state.role });
 
+    // Both roles burn subtitles into the camera feed
+    document.dispatchEvent(new CustomEvent('bridgesign-vcam-activate'));
+
     // Recognition
     if (state.role === 'speaker') {
-      document.dispatchEvent(new CustomEvent('bridgesign-vcam-activate'));
       startSpeechRecognition();
     } else {
-      document.dispatchEvent(new CustomEvent('bridgesign-vcam-stop'));
       await startASLRecognition();
 
       // Start scraping Meet's built-in CC so the signer can read speech

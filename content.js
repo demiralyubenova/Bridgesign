@@ -289,12 +289,12 @@
         });
         break;
       case 'REMOTE_SIGN_PLAN':
-        if (state.role === 'signer' && window.SignPlayer) {
+        if (window.SignPlayer) {
           window.SignPlayer.enqueueManifest(msg.data.signPlan);
         }
         break;
       case 'LOCAL_SIGN_PLAN':
-        if (state.role === 'signer' && window.SignPlayer) {
+        if (window.SignPlayer) {
           window.SignPlayer.enqueueManifest(msg.data.signPlan);
         }
         break;
@@ -371,12 +371,7 @@
     state.toolbar = new VoiceToolbar({ container: root, sessionId: getRoomId() });
     state.toolbar.mount();
 
-    const signSection = document.getElementById('sf-sign-section');
-    if (signSection) {
-      signSection.style.display = state.role === 'signer' ? '' : 'none';
-    }
-
-    if (state.role === 'signer' && window.SignPlayer) {
+    if (window.SignPlayer) {
       window.SignPlayer.mount({
         section: document.getElementById('sf-sign-section'),
         status: document.getElementById('sf-sign-status'),
@@ -398,10 +393,10 @@
 
     // Recognition
     if (state.role === 'speaker') {
-      document.dispatchEvent(new CustomEvent('bridgesign-vcam-activate'));
       startSpeechRecognition();
     } else {
-      document.dispatchEvent(new CustomEvent('bridgesign-vcam-stop'));
+      // Activate virtual camera subtitle overlay (cross-world event)
+      document.dispatchEvent(new CustomEvent('bridgesign-vcam-activate'));
       await startASLRecognition();
 
       // Start scraping Meet's built-in CC so the signer can read speech
@@ -436,13 +431,12 @@
   }
 
   function switchRole() {
-    if (state.role === 'speaker') {
-      stopSpeechRecognition();
-    } else {
+    if (state.role === 'speaker') stopSpeechRecognition();
+    else {
       stopASLRecognition();
+      document.dispatchEvent(new CustomEvent('bridgesign-vcam-stop'));
       if (window.__BridgeSignCaptionScraper) window.__BridgeSignCaptionScraper.stop();
     }
-    document.dispatchEvent(new CustomEvent('bridgesign-vcam-stop'));
     if (window.SignPlayer) {
       window.SignPlayer.reset();
     }
@@ -473,11 +467,9 @@
       }
       if (final) {
         state.toolbar.addTranscript({ speaker: 'You', text: final, partial: false });
-        document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text: final } }));
         port.postMessage({ type: 'CAPTION', data: { source: 'speech', text: final, partial: false } });
       } else if (interim) {
         state.toolbar.addTranscript({ speaker: 'You', text: interim, partial: true });
-        document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text: interim } }));
         port.postMessage({ type: 'CAPTION', data: { source: 'speech', text: interim, partial: true } });
       }
     };
@@ -493,6 +485,9 @@
       const result = await window.ASLRecognition.start((text, partial) => {
         state.toolbar.addTranscript({ speaker: 'You', text, partial });
         port.postMessage({ type: 'CAPTION', data: { source: 'sign', text, partial } });
+
+        // Push caption text onto the virtual camera overlay (cross-world event)
+        document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text } }));
       });
 
       if (result !== true) {

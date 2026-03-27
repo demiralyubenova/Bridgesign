@@ -128,6 +128,14 @@ const SignPlayer = (() => {
     });
   }
 
+  function hasPlayableUnits(manifest) {
+    if (!manifest || !Array.isArray(manifest.units) || !manifest.units.length) {
+      return false;
+    }
+
+    return manifest.units.some((unit) => unit && unit.id && unit.id !== 'NO-SIGN-PLAN');
+  }
+
   function setVisible(visible) {
     if (!state.refs || !state.refs.section) return;
     state.refs.section.style.display = visible ? '' : 'none';
@@ -139,10 +147,13 @@ const SignPlayer = (() => {
     state.lastCompletedManifest = null;
     state.refs = refs;
     state.mounted = true;
-    setVisible(true);
+    setVisible(false);
     updateStatus('Waiting for ASL plan');
     updateQueue([]);
     updateReplayButton();
+    if (state.refs && state.refs.label) {
+      state.refs.label.textContent = '-';
+    }
   }
 
   function enqueueManifest(manifest) {
@@ -150,10 +161,8 @@ const SignPlayer = (() => {
       return;
     }
 
-    if (!hasGestureUnits(manifest)) {
-      // Do not replace a known sign with fingerspelling/no-gesture output.
-      // This keeps the panel stable and prevents it from disappearing when
-      // the planner falls back for a later utterance.
+    if (!hasPlayableUnits(manifest)) {
+      showUnavailableManifest(manifest);
       return;
     }
 
@@ -179,7 +188,10 @@ const SignPlayer = (() => {
     updateReplayButton();
     updateQueue([]);
     updateStatus('Waiting for ASL plan');
-    setVisible(true);
+    if (state.refs && state.refs.label) {
+      state.refs.label.textContent = '-';
+    }
+    setVisible(false);
   }
 
   function updateStatus(message) {
@@ -234,7 +246,8 @@ const SignPlayer = (() => {
 
     state.currentManifest = manifest;
     const token = ++state.currentPlaybackToken;
-    updateStatus(`${manifest.priority === 'urgent' ? 'Urgent' : 'Playing'} ASL for: ${manifest.text}`);
+    const playbackLabel = manifest.mode === 'fingerspell' ? 'Fingerspelling' : 'ASL';
+    updateStatus(`${manifest.priority === 'urgent' ? 'Urgent' : 'Playing'} ${playbackLabel} for: ${manifest.text}`);
     updateQueue(manifest.units);
 
     for (const unit of manifest.units) {
@@ -325,6 +338,34 @@ const SignPlayer = (() => {
     `;
     state.refs.fallbackCard.style.display = 'flex';
     if (state.refs.video) {
+      state.refs.video.style.display = 'none';
+    }
+  }
+
+  function showUnavailableManifest(manifest) {
+    stopCurrentPlayback();
+    state.queue = [];
+    state.currentManifest = null;
+    state.lastCompletedManifest = null;
+    updateReplayButton();
+    setVisible(true);
+    updateStatus('No ASL gesture available');
+    if (state.refs && state.refs.label) {
+      state.refs.label.textContent = (manifest.text || 'UNKNOWN').toUpperCase();
+    }
+    if (state.refs && state.refs.unitList) {
+      state.refs.unitList.innerHTML = `<div class="sf-sign-placeholder">No ASL gesture available yet for "${escapeHtml(manifest.text || 'this phrase')}".</div>`;
+    }
+    if (state.refs && state.refs.fallbackCard) {
+      state.refs.fallbackCard.innerHTML = `
+        <div class="sf-sign-fallback-inner">
+          <div class="sf-sign-fallback-emoji">🤷</div>
+          <div class="sf-sign-fallback-text">No ASL Gesture</div>
+        </div>
+      `;
+      state.refs.fallbackCard.style.display = 'flex';
+    }
+    if (state.refs && state.refs.video) {
       state.refs.video.style.display = 'none';
     }
   }

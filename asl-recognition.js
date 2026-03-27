@@ -309,7 +309,10 @@ const ASLRecognition = (() => {
     // Listen for landmarks from offscreen document
     chrome.runtime.onMessage.addListener((msg) => {
       if (msg.type === 'HAND_LANDMARKS' && isActive) {
-        onHandResults({ multiHandLandmarks: msg.landmarks ? [msg.landmarks] : [] });
+        const multiHandLandmarks = Array.isArray(msg.landmarks)
+          ? (Array.isArray(msg.landmarks[0]) ? msg.landmarks : [])
+          : [];
+        onHandResults({ multiHandLandmarks });
       }
     });
   }
@@ -321,13 +324,16 @@ const ASLRecognition = (() => {
     let detectedToken = null;
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-      const landmarks = results.multiHandLandmarks[0];
+      const handLandmarks = results.multiHandLandmarks.filter(
+        (hand) => Array.isArray(hand) && hand.length >= 21
+      );
+      const primaryLandmarks = selectPrimaryHand(handLandmarks);
       
       let handWasHandled = false;
 
       // Check dynamic gestures first because they rely on movement across frames.
       if (window.MotionTracker) {
-        const motionMatch = window.MotionTracker.track(landmarks);
+        const motionMatch = window.MotionTracker.track(handLandmarks);
         if (motionMatch.token && motionMatch.confidence >= CONFIG.CONFIDENCE_THRESHOLD) {
           detectedToken = motionMatch.token;
           if (motionMatch.kind === 'word') {
@@ -339,8 +345,8 @@ const ASLRecognition = (() => {
         }
       }
 
-      if (!handWasHandled) {
-        const wordGesture = classifyWordGesture(landmarks);
+      if (!handWasHandled && primaryLandmarks) {
+        const wordGesture = classifyWordGesture(primaryLandmarks);
         if (wordGesture.word && wordGesture.confidence >= CONFIG.CONFIDENCE_THRESHOLD) {
           detectedToken = wordGesture.word;
           processWordGesture(wordGesture.word, false);
@@ -348,24 +354,50 @@ const ASLRecognition = (() => {
         }
       }
 
-      if (!handWasHandled) {
-        const classification = classifyHandLandmarks(landmarks);
+      if (!handWasHandled && primaryLandmarks) {
+        const classification = classifyHandLandmarks(primaryLandmarks);
         if (classification.confidence >= CONFIG.CONFIDENCE_THRESHOLD) {
           detectedToken = classification.letter;
           processLetter(classification.letter);
         } else {
           processLetter('nothing');
         }
+      } else if (!primaryLandmarks) {
+        processLetter('nothing');
       }
 
-      drawLandmarksOnCanvas(landmarks, detectedToken);
+      drawLandmarksOnCanvas(handLandmarks, detectedToken);
     } else {
       processLetter('nothing');
       drawLandmarksOnCanvas(null, null);
     }
   }
 
-  function drawLandmarksOnCanvas(landmarks, detectedToken) {
+  function selectPrimaryHand(hands) {
+    if (!hands || hands.length === 0) return null;
+    return hands
+      .slice()
+      .sort((a, b) => estimateHandSize(b) - estimateHandSize(a))[0];
+  }
+
+  function estimateHandSize(landmarks) {
+    if (!landmarks || landmarks.length < 21) return 0;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    for (const point of landmarks) {
+      if (point.x < minX) minX = point.x;
+      if (point.x > maxX) maxX = point.x;
+      if (point.y < minY) minY = point.y;
+      if (point.y > maxY) maxY = point.y;
+    }
+
+    return (maxX - minX) * (maxY - minY);
+  }
+
+  function drawLandmarksOnCanvas(handSets, detectedToken) {
     const canvas = document.getElementById('sf-pip-canvas');
     const label = document.getElementById('sf-pip-label');
     const container = document.getElementById('sf-pip-container');
@@ -392,7 +424,7 @@ const ASLRecognition = (() => {
       label.textContent = (detectedToken && detectedToken !== 'nothing') ? detectedToken : '-';
     }
 
-    if (!landmarks || landmarks.length === 0) return;
+    if (!handSets || handSets.length === 0) return;
 
     ctx.save();
     ctx.translate(canvas.width, 0);
@@ -410,20 +442,22 @@ const ASLRecognition = (() => {
 
     ctx.strokeStyle = '#22c55e';
     ctx.lineWidth = 2;
-    for (const [i, j] of connections) {
-      const p1 = landmarks[i];
-      const p2 = landmarks[j];
-      ctx.beginPath();
-      ctx.moveTo(p1.x * w, p1.y * h);
-      ctx.lineTo(p2.x * w, p2.y * h);
-      ctx.stroke();
-    }
+    for (const landmarks of handSets) {
+      for (const [i, j] of connections) {
+        const p1 = landmarks[i];
+        const p2 = landmarks[j];
+        ctx.beginPath();
+        ctx.moveTo(p1.x * w, p1.y * h);
+        ctx.lineTo(p2.x * w, p2.y * h);
+        ctx.stroke();
+      }
 
-    ctx.fillStyle = '#ef4444';
-    for (const p of landmarks) {
-      ctx.beginPath();
-      ctx.arc(p.x * w, p.y * h, 3, 0, 2 * Math.PI);
-      ctx.fill();
+      ctx.fillStyle = '#ef4444';
+      for (const p of landmarks) {
+        ctx.beginPath();
+        ctx.arc(p.x * w, p.y * h, 3, 0, 2 * Math.PI);
+        ctx.fill();
+      }
     }    
     ctx.restore();
   }

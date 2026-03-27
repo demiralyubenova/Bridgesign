@@ -11,24 +11,17 @@ async function initHands() {
   });
 
   hands.setOptions({
-    maxNumHands: 1,
+    maxNumHands: 2,
     modelComplexity: 1,
     minDetectionConfidence: 0.6,
     minTrackingConfidence: 0.5,
   });
 
   hands.onResults((results) => {
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-      chrome.runtime.sendMessage({
-        type: 'HAND_LANDMARKS',
-        landmarks: results.multiHandLandmarks[0]
-      });
-    } else {
-      chrome.runtime.sendMessage({
-        type: 'HAND_LANDMARKS',
-        landmarks: null
-      });
-    }
+    chrome.runtime.sendMessage({
+      type: 'HAND_LANDMARKS',
+      landmarks: results.multiHandLandmarks || []
+    });
   });
 
   await hands.initialize();

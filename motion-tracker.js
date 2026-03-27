@@ -1,21 +1,44 @@
 // BridgeSign Motion Tracker
-// Tracks fingertip trajectories to detect dynamic ASL letters like J and Z
+// Tracks hand trajectories to detect dynamic ASL letters and starter word patterns.
 
 const MotionTracker = (() => {
   const HISTORY_SIZE = 30;
-  const history = []; // stores { t, indexTip, pinkyTip, center, pose }
+  const singleHandHistory = []; // stores { t, indexTip, pinkyTip, center, pose }
+  const dualHandHistory = []; // stores { t, leftCenter, rightCenter, leftPose, rightPose }
   let lastTriggerTime = 0;
   const COOLDOWN_MS = 1200;
 
-  function track(landmarks) {
-    if (!landmarks || landmarks.length < 21) return { token: null, kind: null, confidence: 0 };
+  function track(input) {
+    const hands = normalizeHands(input);
+    if (hands.length === 0) return { token: null, kind: null, confidence: 0 };
     
     const now = Date.now();
     if (now - lastTriggerTime < COOLDOWN_MS) return { token: null, kind: null, confidence: 0 };
 
+    if (hands.length >= 2) {
+      const dualMatch = trackTwoHands(hands, now);
+      if (dualMatch.token) {
+        return dualMatch;
+      }
+    } else {
+      dualHandHistory.length = 0;
+    }
+
+    return trackSingleHand(hands[0], now);
+  }
+
+  function normalizeHands(input) {
+    if (!Array.isArray(input) || input.length === 0) return [];
+    if (Array.isArray(input[0])) {
+      return input.filter((hand) => Array.isArray(hand) && hand.length >= 21);
+    }
+    return input.length >= 21 ? [input] : [];
+  }
+
+  function trackSingleHand(landmarks, now) {
     const pose = summarizePose(landmarks);
 
-    history.push({
+    singleHandHistory.push({
       t: now,
       indexTip: landmarks[8],
       pinkyTip: landmarks[20],
@@ -23,43 +46,77 @@ const MotionTracker = (() => {
       pose: pose.name,
     });
 
-    if (history.length > HISTORY_SIZE) {
-      history.shift();
+    if (singleHandHistory.length > HISTORY_SIZE) {
+      singleHandHistory.shift();
     }
 
-    if (history.length < 10) return { token: null, kind: null, confidence: 0 };
+    if (singleHandHistory.length < 10) return { token: null, kind: null, confidence: 0 };
 
-    const helloMatch = detectHelloPattern(history);
+    const helloMatch = detectHelloPattern(singleHandHistory);
     if (helloMatch.confidence > 0.8) {
       lastTriggerTime = now;
-      history.length = 0;
+      resetHistories();
       return { token: 'HELLO', kind: 'word', confidence: helloMatch.confidence };
     }
 
-    const yesMatch = detectYesPattern(history);
+    const yesMatch = detectYesPattern(singleHandHistory);
     if (yesMatch.confidence > 0.8) {
       lastTriggerTime = now;
-      history.length = 0;
+      resetHistories();
       return { token: 'YES', kind: 'word', confidence: yesMatch.confidence };
     }
 
     // Detect Z using index tip
-    const zMatch = detectZPattern(history.map(h => h.indexTip));
+    const zMatch = detectZPattern(singleHandHistory.map(h => h.indexTip));
     if (zMatch.confidence > 0.75) {
       lastTriggerTime = now;
-      history.length = 0;
+      resetHistories();
       return { token: 'Z', kind: 'letter', confidence: zMatch.confidence };
     }
 
     // Detect J using pinky tip
-    const jMatch = detectJPattern(history.map(h => h.pinkyTip));
+    const jMatch = detectJPattern(singleHandHistory.map(h => h.pinkyTip));
     if (jMatch.confidence > 0.75) {
       lastTriggerTime = now;
-      history.length = 0;
+      resetHistories();
       return { token: 'J', kind: 'letter', confidence: jMatch.confidence };
     }
 
     return { token: null, kind: null, confidence: 0 };
+  }
+
+  function trackTwoHands(hands, now) {
+    const summarized = hands
+      .map((hand) => summarizePose(hand))
+      .sort((a, b) => a.center.x - b.center.x);
+
+    dualHandHistory.push({
+      t: now,
+      leftCenter: summarized[0].center,
+      rightCenter: summarized[1].center,
+      leftPose: summarized[0].name,
+      rightPose: summarized[1].name,
+    });
+
+    if (dualHandHistory.length > HISTORY_SIZE) {
+      dualHandHistory.shift();
+    }
+
+    if (dualHandHistory.length < 10) return { token: null, kind: null, confidence: 0 };
+
+    const bookMatch = detectBookPattern(dualHandHistory);
+    if (bookMatch.confidence > 0.8) {
+      lastTriggerTime = now;
+      resetHistories();
+      return { token: 'BOOK', kind: 'word', confidence: bookMatch.confidence };
+    }
+
+    return { token: null, kind: null, confidence: 0 };
+  }
+
+  function resetHistories() {
+    singleHandHistory.length = 0;
+    dualHandHistory.length = 0;
   }
 
   function summarizePose(landmarks) {
@@ -177,6 +234,65 @@ const MotionTracker = (() => {
     }
 
     return { confidence: 0 };
+  }
+
+  function detectBookPattern(entries) {
+    const openFrames = entries.filter(
+      (entry) => entry.leftPose === 'open-palm' && entry.rightPose === 'open-palm'
+    ).length;
+
+    if (openFrames < Math.floor(entries.length * 0.65)) {
+      return { confidence: 0 };
+    }
+
+    const first = averageDualEntry(entries.slice(0, 4));
+    const last = averageDualEntry(entries.slice(-4));
+
+    const startGap = first.rightCenter.x - first.leftCenter.x;
+    const endGap = last.rightCenter.x - last.leftCenter.x;
+    const leftMove = first.leftCenter.x - last.leftCenter.x;
+    const rightMove = last.rightCenter.x - first.rightCenter.x;
+    const verticalShift = Math.max(
+      Math.abs(first.leftCenter.y - last.leftCenter.y),
+      Math.abs(first.rightCenter.y - last.rightCenter.y)
+    );
+
+    if (
+      startGap < 0.2
+      && endGap > startGap + 0.12
+      && leftMove > 0.04
+      && rightMove > 0.04
+      && verticalShift < 0.08
+    ) {
+      return { confidence: 0.87 };
+    }
+
+    return { confidence: 0 };
+  }
+
+  function averageDualEntry(entries) {
+    const count = Math.max(entries.length, 1);
+    const sum = entries.reduce((acc, entry) => {
+      acc.leftCenter.x += entry.leftCenter.x;
+      acc.leftCenter.y += entry.leftCenter.y;
+      acc.rightCenter.x += entry.rightCenter.x;
+      acc.rightCenter.y += entry.rightCenter.y;
+      return acc;
+    }, {
+      leftCenter: { x: 0, y: 0 },
+      rightCenter: { x: 0, y: 0 },
+    });
+
+    return {
+      leftCenter: {
+        x: sum.leftCenter.x / count,
+        y: sum.leftCenter.y / count,
+      },
+      rightCenter: {
+        x: sum.rightCenter.x / count,
+        y: sum.rightCenter.y / count,
+      },
+    };
   }
 
   function detectZPattern(pts) {

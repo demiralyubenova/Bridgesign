@@ -129,6 +129,20 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'SIGN_PLAN': {
+        if (!currentRoom) return;
+
+        broadcastToRoom(currentRoom, ws, {
+          type: 'SIGN_PLAN',
+          data: {
+            ...msg.data,
+            senderId: id,
+            senderRole: currentRole,
+          },
+        });
+        break;
+      }
+
       default:
         console.log(`[?] Client ${id}: Unknown message type "${msg.type}"`);
     }

@@ -4,13 +4,21 @@
 document.addEventListener('DOMContentLoaded', () => {
   const serverInput = document.getElementById('info-server');
   const saveBtn = document.getElementById('btn-save-server');
+  const plannerInput = document.getElementById('info-planner');
+  const savePlannerBtn = document.getElementById('btn-save-planner');
 
   // Load saved server URL
-  chrome.storage.sync.get(['bridgesignServerUrl'], (res) => {
-    if (res.bridgesignServerUrl) {
-      serverInput.value = res.bridgesignServerUrl;
+  chrome.storage.sync.get(['bridgesignServerUrl', 'bridgesignPlannerUrl', 'signflowServerUrl', 'signflowPlannerUrl'], (res) => {
+    if (res.bridgesignServerUrl || res.signflowServerUrl) {
+      serverInput.value = res.bridgesignServerUrl || res.signflowServerUrl;
     } else {
       serverInput.value = 'ws://localhost:3001';
+    }
+
+    if (res.bridgesignPlannerUrl || res.signflowPlannerUrl) {
+      plannerInput.value = res.bridgesignPlannerUrl || res.signflowPlannerUrl;
+    } else {
+      plannerInput.value = 'http://127.0.0.1:8001';
     }
   });
 
@@ -24,6 +32,20 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
           saveBtn.textContent = 'Save';
           saveBtn.classList.remove('success');
+        }, 2000);
+      });
+    }
+  });
+
+  savePlannerBtn.addEventListener('click', () => {
+    const newUrl = plannerInput.value.trim();
+    if (newUrl) {
+      chrome.storage.sync.set({ bridgesignPlannerUrl: newUrl }, () => {
+        savePlannerBtn.textContent = 'Saved!';
+        savePlannerBtn.classList.add('success');
+        setTimeout(() => {
+          savePlannerBtn.textContent = 'Save';
+          savePlannerBtn.classList.remove('success');
         }, 2000);
       });
     }

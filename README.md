@@ -1,16 +1,20 @@
-# BridgeSign🤟
+# SignFlow
 
-**Real-time sign language ↔ speech translation for video calls**
+Real-time sign language and speech support for Google Meet.
 
-A Chrome extension that enables deaf/hard-of-hearing and hearing participants to communicate seamlessly in Google Meet through real-time ASL recognition and speech-to-text captions.
+## What This Version Adds
 
-## Features (MVP)
+- Speech-to-text captions remain the primary live channel.
+- Finalized speech phrases now generate an ASL playback manifest.
+- The receiver sees captions and an ASL playback panel at the same time.
+- Unknown words fall back to fingerspelling units instead of blocking the flow.
 
-- 🤟 **ASL → Text**: Fingerspelling recognition via webcam using MediaPipe + TensorFlow.js
-- 🗣️ **Speech → Text**: Real-time speech recognition using Web Speech API
-- 🔄 **Two-way sync**: Both participants see captions from the other side
-- 🎨 **Premium overlay UI**: Glassmorphism caption bar integrated into Google Meet
-- 🔌 **Plugin architecture**: Chrome Extension (Manifest V3) — no separate app needed
+## Services
+
+You now run two local services:
+
+1. Relay server for room sync
+2. Python sign planner for ASL playback manifests
 
 ## Quick Start
 
@@ -22,82 +26,73 @@ npm install
 npm start
 ```
 
-The WebSocket relay runs on `ws://localhost:3001`.
+Relay default: `ws://localhost:3001`
 
-### 2. Load the Chrome extension
+### 2. Start the sign planner
 
-1. Open Chrome → `chrome://extensions/`
-2. Enable **Developer mode** (top right)
-3. Click **Load unpacked**
-4. Select the `ht12` root folder (not `server/`)
-5. The SignFlow icon should appear in your toolbar
+```bash
+cd sign-service
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app:app --host 0.0.0.0 --port 8001
+```
 
-### 3. Use in Google Meet
+Planner default: `http://localhost:8001`
 
-1. Open a Google Meet call
-2. SignFlow will show a role selector — choose **"I Sign ASL"** or **"I Speak English"**
-3. The caption overlay appears at the bottom of the Meet window
-4. Invite the other participant to install the extension too
+### 3. Load the extension
+
+1. Open `chrome://extensions/`
+2. Enable Developer mode
+3. Click Load unpacked
+4. Select the repo root folder
+
+### 4. Configure URLs if needed
+
+The popup now exposes:
+
+- Relay Server URL
+- Sign Planner URL
+
+Defaults:
+
+- `ws://localhost:3001`
+- `http://localhost:8001`
+
+## ASL Media Assets
+
+The sign planner ships with phrase matching and fingerspelling fallback, but it does not include real ASL clip files yet. Add validated clips under:
+
+```text
+sign-service/media/asl/phrases/
+sign-service/media/asl/fingerspelling/
+sign-service/media/asl/days/
+sign-service/media/asl/numbers/
+```
+
+Expected filenames:
+
+- phrase clips: lowercase slug ids such as `can-you-repeat-that.mp4`
+- fingerspelling clips: `fs-a.mp4` through `fs-z.mp4`
+- number clips: `num-0.mp4` through `num-9.mp4`
+- day clips: `monday.mp4` through `sunday.mp4`
+
+If a clip is missing, the extension shows a readable ASL unit card so captions still remain usable.
 
 ## Architecture
 
-```
-┌─────────────────────┐     WebSocket      ┌─────────────────────┐
-│  Participant A       │◄──── Relay ───────►│  Participant B       │
-│  (Chrome Extension)  │     Server         │  (Chrome Extension)  │
-│                      │   (server.js)      │                      │
-│  Role: Signer 🤟     │                    │  Role: Speaker 🗣️   │
-│  ASL → Text          │                    │  Speech → Text       │
-└─────────────────────┘                     └─────────────────────┘
-```
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Extension | Chrome Extension (Manifest V3) |
-| ASL Recognition | MediaPipe Hands + TensorFlow.js |
-| Speech-to-Text | Web Speech API |
-| Sync | WebSocket (Node.js + ws) |
-| Styling | Vanilla CSS (glassmorphism) |
-
-## Project Structure
-
-```
-ht12/
-├── manifest.json        # Extension manifest
-├── background.js        # Service worker (WebSocket client)
-├── content.js           # Meet overlay + recognition logic
-├── content.css          # Overlay styles
-├── popup/
-│   ├── popup.html       # Browser action popup
-│   ├── popup.css
-│   └── popup.js
-├── icons/               # Extension icons
-│   ├── icon16.png
-│   ├── icon48.png
-│   └── icon128.png
-├── models/              # TF.js ASL model (Phase 3)
-├── libs/                # MediaPipe + TF.js bundles
-└── server/
-    ├── package.json
-    └── server.js        # WebSocket relay server
+```text
+speaker speech
+  -> browser speech recognition
+  -> live caption relay
+  -> python sign planner
+  -> sign plan relay
+  -> receiver overlay
+     -> captions + ASL playback queue
 ```
 
-## Roadmap
+## Current Constraints
 
-- [x] Extension scaffold + overlay UI
-- [x] Speech → Text (Web Speech API)
-- [x] WebSocket relay server
-- [ ] ASL fingerspelling recognition (MediaPipe + TF.js)
-- [ ] Performance optimization
-- [ ] Full ASL signs (top 100)
-- [ ] Zoom + Teams support
-- [ ] ASL avatar (text → animated signs)
-
-## License
-
-MIT
-=======
-# Bridgesign
->>>>>>> 32eef10daa7ef3d7ce990c5257ed57f2e329663b
+- v1 is optimized for ASL-first accessibility, not full open-domain ASL translation.
+- Phrase quality depends on the clip library you add and validate with Deaf ASL users.
+- Generic auto-avatar signing is intentionally not the primary path in this version.

@@ -1,189 +1,327 @@
 // BridgeSign Background Service Worker
-// Manages extension state and WebSocket connection to relay server
+// Manages per-tab relay sessions, sign-planning requests, and the offscreen ASL pipeline.
 
 let RELAY_SERVER_URL = 'ws://localhost:3001';
-chrome.storage.sync.get(['bridgesignServerUrl'], (res) => {
-  if (res.bridgesignServerUrl) RELAY_SERVER_URL = res.bridgesignServerUrl;
-});
+let SIGN_PLAN_SERVER_URL = 'http://127.0.0.1:8001';
+
+chrome.storage.sync.get(
+  ['bridgesignServerUrl', 'bridgesignPlannerUrl', 'signflowServerUrl', 'signflowPlannerUrl'],
+  (res) => {
+    RELAY_SERVER_URL = res.bridgesignServerUrl || res.signflowServerUrl || RELAY_SERVER_URL;
+    SIGN_PLAN_SERVER_URL = res.bridgesignPlannerUrl || res.signflowPlannerUrl || SIGN_PLAN_SERVER_URL;
+  }
+);
+
+const tabSessions = new Map(); // tabId -> { port, ws, roomId, role, reconnectAttempts, latencyMs, pingInterval, lastError }
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'sync' && changes.bridgesignServerUrl) {
-    RELAY_SERVER_URL = changes.bridgesignServerUrl.newValue;
+  if (namespace !== 'sync') return;
+
+  if (changes.bridgesignServerUrl || changes.signflowServerUrl) {
+    RELAY_SERVER_URL = changes.bridgesignServerUrl?.newValue || changes.signflowServerUrl?.newValue || RELAY_SERVER_URL;
     console.log('[BridgeSign] Server URL updated:', RELAY_SERVER_URL);
-    if (ws && ws.readyState !== WebSocket.CLOSED) {
-      ws.close(); // Triggers auto-reconnect to the new URL
+    for (const session of tabSessions.values()) {
+      if (session.ws && session.ws.readyState !== WebSocket.CLOSED) {
+        session.ws.close();
+      }
     }
+  }
+
+  if (changes.bridgesignPlannerUrl || changes.signflowPlannerUrl) {
+    SIGN_PLAN_SERVER_URL = changes.bridgesignPlannerUrl?.newValue || changes.signflowPlannerUrl?.newValue || SIGN_PLAN_SERVER_URL;
+    console.log('[BridgeSign] Sign planner URL updated:', SIGN_PLAN_SERVER_URL);
   }
 });
 
-let ws = null;
-let currentRoomId = null;
-let currentRole = null;
-let lastAppError = null;
-let latencyMs = 0;
-let pingInterval = null;
-let connectedPorts = new Map(); // tabId -> port
-let reconnectAttempts = 0;
-
-// Listen for connections from content scripts
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== 'bridgesign') return;
+  if (port.name !== 'bridgesign' || !port.sender.tab) return;
 
   const tabId = port.sender.tab.id;
-  connectedPorts.set(tabId, port);
+  const session = {
+    port,
+    ws: null,
+    roomId: null,
+    role: null,
+    reconnectAttempts: 0,
+    latencyMs: 0,
+    pingInterval: null,
+    lastError: null,
+  };
+
+  tabSessions.set(tabId, session);
 
   port.onMessage.addListener((msg) => {
     handleContentMessage(tabId, msg);
   });
 
   port.onDisconnect.addListener(() => {
-    connectedPorts.delete(tabId);
-    if (connectedPorts.size === 0 && ws) {
-    }
+    teardownSession(tabId);
   });
 });
 
-// Handle browser coming back online
 self.addEventListener('online', () => {
-  if (currentRoomId && connectedPorts.size > 0 && (!ws || ws.readyState !== WebSocket.OPEN)) {
-    reconnectAttempts = 0;
-    joinRoom(currentRoomId, currentRole);
+  for (const [tabId, session] of tabSessions.entries()) {
+    if (session.roomId && (!session.ws || session.ws.readyState !== WebSocket.OPEN)) {
+      session.reconnectAttempts = 0;
+      joinRoom(tabId, session.roomId, session.role);
+    }
   }
 });
 
-// Handle messages from content script
+function getSession(tabId) {
+  return tabSessions.get(tabId) || null;
+}
+
+function clearPingInterval(session) {
+  if (session && session.pingInterval) {
+    clearInterval(session.pingInterval);
+    session.pingInterval = null;
+  }
+}
+
+function teardownSession(tabId) {
+  const session = getSession(tabId);
+  if (!session) return;
+
+  clearPingInterval(session);
+
+  if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+    session.ws.close();
+  }
+
+  tabSessions.delete(tabId);
+}
+
 function handleContentMessage(tabId, msg) {
+  const session = getSession(tabId);
+  if (!session) return;
+
   switch (msg.type) {
     case 'JOIN_ROOM':
-      joinRoom(msg.roomId, msg.role);
+      joinRoom(tabId, msg.roomId, msg.role);
       break;
     case 'LEAVE_ROOM':
-      leaveRoom();
+      leaveRoom(tabId);
       break;
     case 'EXTENSION_ERROR':
-      lastAppError = msg.message;
+      session.lastError = msg.message;
       break;
     case 'CAPTION':
-      sendCaption(msg.data);
+      sendCaption(tabId, msg.data);
       break;
     case 'GET_STATE':
       sendToTab(tabId, {
         type: 'STATE_UPDATE',
         data: {
-          connected: ws && ws.readyState === WebSocket.OPEN,
-          roomId: currentRoomId,
+          connected: Boolean(session.ws && session.ws.readyState === WebSocket.OPEN),
+          roomId: session.roomId,
         },
       });
       break;
   }
 }
 
-// Connect to WebSocket relay and join room
-function joinRoom(roomId, role) {
-  if (currentRoomId && currentRoomId !== roomId && ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'LEAVE' }));
-  }
+function joinRoom(tabId, roomId, role) {
+  const session = getSession(tabId);
+  if (!session || !roomId) return;
 
-  currentRoomId = roomId;
-  if (role) currentRole = role;
+  session.roomId = roomId;
+  if (role) session.role = role;
+  session.lastError = null;
 
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'JOIN', roomId, role: currentRole }));
-    broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: true, roomId } });
+  if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+    session.ws.send(JSON.stringify({ type: 'JOIN', roomId, role: session.role }));
+    sendToTab(tabId, { type: 'STATE_UPDATE', data: { connected: true, roomId } });
     return;
   }
 
-  ws = new WebSocket(RELAY_SERVER_URL);
+  if (session.ws && session.ws.readyState === WebSocket.CONNECTING) {
+    return;
+  }
 
-  ws.onopen = () => {
-    reconnectAttempts = 0;
-    ws.send(JSON.stringify({ type: 'JOIN', roomId, role: currentRole }));
-    broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: true, roomId } });
-    
-    if (pingInterval) clearInterval(pingInterval);
-    pingInterval = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'PING', timestamp: Date.now() }));
+  session.ws = new WebSocket(RELAY_SERVER_URL);
+  attachWebSocketHandlers(tabId, session);
+}
+
+function attachWebSocketHandlers(tabId, session) {
+  const socket = session.ws;
+  if (!socket) return;
+
+  socket.onopen = () => {
+    const liveSession = getSession(tabId);
+    if (!liveSession || liveSession.ws !== socket) return;
+
+    liveSession.reconnectAttempts = 0;
+    socket.send(JSON.stringify({ type: 'JOIN', roomId: liveSession.roomId, role: liveSession.role }));
+    sendToTab(tabId, { type: 'STATE_UPDATE', data: { connected: true, roomId: liveSession.roomId } });
+
+    clearPingInterval(liveSession);
+    liveSession.pingInterval = setInterval(() => {
+      if (liveSession.ws && liveSession.ws.readyState === WebSocket.OPEN) {
+        liveSession.ws.send(JSON.stringify({ type: 'PING', timestamp: Date.now() }));
       }
     }, 2000);
   };
 
-  ws.onmessage = (event) => {
+  socket.onmessage = (event) => {
+    const liveSession = getSession(tabId);
+    if (!liveSession || liveSession.ws !== socket) return;
+
     try {
       const msg = JSON.parse(event.data);
       if (msg.type === 'CAPTION') {
-        broadcastToTabs({ type: 'REMOTE_CAPTION', data: msg.data });
+        sendToTab(tabId, { type: 'REMOTE_CAPTION', data: msg.data });
+      } else if (msg.type === 'SIGN_PLAN') {
+        sendToTab(tabId, { type: 'REMOTE_SIGN_PLAN', data: msg.data });
       } else if (msg.type === 'PEER_JOINED') {
-        broadcastToTabs({ type: 'PEER_JOINED', data: msg.data });
+        sendToTab(tabId, { type: 'PEER_JOINED', data: msg.data });
       } else if (msg.type === 'PEER_LEFT') {
-        broadcastToTabs({ type: 'PEER_LEFT', data: msg.data });
+        sendToTab(tabId, { type: 'PEER_LEFT', data: msg.data });
       } else if (msg.type === 'PONG') {
-        latencyMs = Date.now() - msg.timestamp;
+        liveSession.latencyMs = Date.now() - msg.timestamp;
+      } else if (msg.type === 'ERROR') {
+        liveSession.lastError = msg.message || 'Unknown relay error';
       }
-    } catch (e) {
-      console.error('[BridgeSign] Failed to parse WS message:', e);
+    } catch (error) {
+      console.error('[BridgeSign] Failed to parse WS message:', error);
     }
   };
 
-  ws.onerror = (error) => {
+  socket.onerror = (error) => {
+    const liveSession = getSession(tabId);
+    if (!liveSession || liveSession.ws !== socket) return;
+
+    liveSession.lastError = 'WebSocket connection error';
     console.error('[BridgeSign] WebSocket error:', error);
-    broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: false, roomId: currentRoomId } });
+    sendToTab(tabId, { type: 'STATE_UPDATE', data: { connected: false, roomId: liveSession.roomId } });
   };
 
-  ws.onclose = () => {
-    if (pingInterval) clearInterval(pingInterval);
-    latencyMs = 0;
-    broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: false, roomId: currentRoomId } });
-    
-    if (!navigator.onLine) {
-      console.log('[BridgeSign] Browser offline. Pausing reconnects.');
+  socket.onclose = () => {
+    const liveSession = getSession(tabId);
+    if (!liveSession || liveSession.ws !== socket) return;
+
+    clearPingInterval(liveSession);
+    liveSession.latencyMs = 0;
+    liveSession.ws = null;
+    sendToTab(tabId, { type: 'STATE_UPDATE', data: { connected: false, roomId: liveSession.roomId } });
+
+    if (!navigator.onLine || !liveSession.roomId) {
       return;
     }
 
-    if (reconnectAttempts >= 5) {
-      console.warn('[BridgeSign] Max reconnect attempts reached.');
-      broadcastToTabs({ type: 'STATE_UPDATE', data: { connected: false, roomId: currentRoomId, error: 'CONNECTION_FAILED' } });
+    if (liveSession.reconnectAttempts >= 5) {
+      liveSession.lastError = 'CONNECTION_FAILED';
+      sendToTab(tabId, {
+        type: 'STATE_UPDATE',
+        data: { connected: false, roomId: liveSession.roomId, error: 'CONNECTION_FAILED' },
+      });
       return;
     }
 
-    // Exponential backoff
-    const baseDelay = 1000;
-    const maxDelay = 30000;
-    const delay = Math.min(baseDelay * Math.pow(2, reconnectAttempts), maxDelay);
-    reconnectAttempts++;
-    
+    const delay = Math.min(1000 * Math.pow(2, liveSession.reconnectAttempts), 30000);
+    liveSession.reconnectAttempts += 1;
+
     setTimeout(() => {
-      if (currentRoomId && connectedPorts.size > 0) {
-        joinRoom(currentRoomId, currentRole);
-      }
+      const retrySession = getSession(tabId);
+      if (!retrySession || !retrySession.roomId || retrySession.ws) return;
+      joinRoom(tabId, retrySession.roomId, retrySession.role);
     }, delay);
   };
 }
 
-function leaveRoom() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'LEAVE' }));
+function leaveRoom(tabId) {
+  const session = getSession(tabId);
+  if (!session) return;
+
+  clearPingInterval(session);
+  if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+    session.ws.send(JSON.stringify({ type: 'LEAVE' }));
+    session.ws.close();
   }
-  currentRoomId = null;
+  session.ws = null;
+  session.roomId = null;
+  session.latencyMs = 0;
 }
 
-function sendCaption(data) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'CAPTION', data }));
+function sendCaption(tabId, data) {
+  const session = getSession(tabId);
+  if (!session || !data) return;
+
+  if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+    session.ws.send(JSON.stringify({ type: 'CAPTION', data }));
+  }
+
+  if (data.source === 'speech' && data.partial === false) {
+    requestAndSendSignPlan(tabId, data);
+  }
+}
+
+async function requestAndSendSignPlan(tabId, data) {
+  const session = getSession(tabId);
+  const plannerUrl = (SIGN_PLAN_SERVER_URL || '').replace(/\/$/, '');
+  if (!session || !plannerUrl) return;
+
+  try {
+    const response = await fetch(`${plannerUrl}/api/sign-plan`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text: data.text,
+        sign_language: 'ASL',
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Planner responded with ${response.status}`);
+    }
+
+    const signPlan = await response.json();
+    sendToTab(tabId, {
+      type: 'LOCAL_SIGN_PLAN',
+      data: {
+        source: data.source,
+        text: data.text,
+        signPlan,
+        timestamp: Date.now(),
+      },
+    });
+
+    if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+      session.ws.send(JSON.stringify({
+        type: 'SIGN_PLAN',
+        data: {
+          source: data.source,
+          text: data.text,
+          signPlan,
+          timestamp: Date.now(),
+        },
+      }));
+    }
+  } catch (error) {
+    session.lastError = error && error.message ? error.message : 'Failed to build sign plan';
+    console.warn('[BridgeSign] Failed to build sign plan:', session.lastError);
   }
 }
 
 function sendToTab(tabId, msg) {
-  const port = connectedPorts.get(tabId);
-  if (port) {
-    port.postMessage(msg);
+  const session = getSession(tabId);
+  if (session && session.port) {
+    session.port.postMessage(msg);
   }
 }
 
-function broadcastToTabs(msg) {
-  for (const port of connectedPorts.values()) {
-    port.postMessage(msg);
+function getPreferredSession() {
+  for (const session of tabSessions.values()) {
+    if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+      return session;
+    }
   }
+  for (const session of tabSessions.values()) {
+    return session;
+  }
+  return null;
 }
 
 // ==================== OFFSCREEN DOCUMENT ====================
@@ -239,23 +377,21 @@ async function hasOffscreenDocument() {
       contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT]
     });
     return contexts.length > 0;
-  } else {
-    // Fallback for older MV3 implementations
-    const matchedClients = await clients.matchAll();
-    return matchedClients.some((c) => c.url.includes('offscreen.html'));
   }
+
+  const matchedClients = await clients.matchAll();
+  return matchedClients.some((c) => c.url.includes('offscreen.html'));
 }
 
-// Listen for messages from popup or content scripts
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'START_OFFSCREEN') {
     setupOffscreenDocument()
       .then(() => waitForOffscreenReady())
       .then((ready) => sendResponse({ success: ready }))
       .catch(() => sendResponse({ success: false }));
-    return true; // Keep channel open for async response
+    return true;
   }
-  
+
   if (msg.type === 'PROCESS_FRAME') {
     if (sender.tab && sender.tab.id) {
       activeSignerTabId = sender.tab.id;
@@ -266,7 +402,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }).catch(() => {});
     return false;
   }
-  
+
   if (msg.type === 'HAND_LANDMARKS') {
     if (activeSignerTabId) {
       chrome.tabs.sendMessage(activeSignerTabId, msg).catch(() => {});
@@ -280,15 +416,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'GET_STATUS') {
+    const session = getPreferredSession();
     sendResponse({
-      connected: ws && ws.readyState === WebSocket.OPEN,
-      roomId: currentRoomId,
-      peers: connectedPorts.size,
-      error: lastAppError,
-      latency: latencyMs
+      connected: Boolean(session && session.ws && session.ws.readyState === WebSocket.OPEN),
+      roomId: session ? session.roomId : null,
+      peers: tabSessions.size,
+      error: session ? session.lastError : null,
+      latency: session ? session.latencyMs : 0,
+      plannerUrl: SIGN_PLAN_SERVER_URL,
     });
-    // Clear the error after viewing it once
-    lastAppError = null;
+    if (session) {
+      session.lastError = null;
+    }
     return true;
   }
 });

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from planner import BASE_DIR, SLT_IMPORT_ERROR, build_sign_plan, slt
 
 
-HOST = os.getenv("HOST", "172.20.10.8")
+HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8001"))
 
 

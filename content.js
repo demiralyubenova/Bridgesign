@@ -759,42 +759,76 @@
   }
   function stopASLRecognition() { if (window.ASLRecognition) window.ASLRecognition.stop(); }
 
-  // ==================== TAB AUDIO CAPTURE + WHISPER ====================
+  // ==================== SIGNER SPEECH LISTENER ====================
+  // Uses the same Web Speech API as the speaker role, but for the signer
+  // to hear what others say through their microphone picking up meeting audio.
+  let signerSpeechRec = null;
+
   function startMeetCaptionScraping() {
-    // We cannot start tabCapture from the content script directly because it lacks activeTab permission.
-    // Instead, prompt the user to click the extension icon.
-    showNotification('💡 Click the BridgeSign extension icon and select "Start Audio Capture" for live subtitles.');
-  }
-
-  // Listen for the background script or popup telling us capture started
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'TAB_CAPTURE_STARTED') {
-      showNotification('🎙️ Live speech transcription active');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      showNotification('⚠️ Speech recognition not supported in this browser');
+      return;
     }
-  });
+    if (signerSpeechRec) stopMeetCaptionScraping();
 
-  function stopMeetCaptionScraping() {
-    chrome.runtime.sendMessage({ type: 'STOP_TAB_CAPTURE' });
-    if (window.MeetCaptionScraper) window.MeetCaptionScraper.stop();
-  }
+    signerSpeechRec = new SpeechRecognition();
+    signerSpeechRec.lang = SPEECH_RECOGNITION_LANG;
+    signerSpeechRec.continuous = true;
+    signerSpeechRec.interimResults = true;
 
-  // Listen for Whisper transcriptions forwarded from background.js
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'WHISPER_TRANSCRIPT' && msg.data) {
-      if (state.toolbar && msg.data.text) {
-        state.toolbar.addTranscript({
-          speaker: 'Speaker',
-          text: msg.data.text,
-          partial: false,
-        });
+    signerSpeechRec.onresult = (e) => {
+      let interim = '', final = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += e.results[i][0].transcript;
+        else interim += e.results[i][0].transcript;
+      }
+      if (final) {
+        if (state.toolbar) {
+          state.toolbar.addTranscript({ speaker: 'Speaker', text: final, partial: false });
+        }
+        document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text: final } }));
 
-        // Store for download
         const now = new Date();
         const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
-        state.fullTranscript.push({ timestamp: timeStr, speaker: 'Speaker', text: msg.data.text });
+        state.fullTranscript.push({ timestamp: timeStr, speaker: 'Speaker', text: final });
+      } else if (interim) {
+        if (state.toolbar) {
+          state.toolbar.addTranscript({ speaker: 'Speaker', text: interim, partial: true });
+        }
+        document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text: interim } }));
       }
+    };
+
+    signerSpeechRec.onend = () => {
+      // Auto-restart if still in signer role
+      if (state.role === 'signer' && signerSpeechRec) {
+        try { signerSpeechRec.start(); } catch (_) {}
+      }
+    };
+
+    signerSpeechRec.onerror = (e) => {
+      if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        console.warn('[BridgeSign] Signer speech recognition error:', e.error);
+      }
+    };
+
+    try {
+      signerSpeechRec.start();
+      showNotification('🎙️ Listening for speaker audio');
+    } catch (err) {
+      console.error('[BridgeSign] Failed to start signer speech recognition:', err);
     }
-  });
+  }
+
+  function stopMeetCaptionScraping() {
+    if (signerSpeechRec) {
+      signerSpeechRec.onend = null;
+      signerSpeechRec.stop();
+      signerSpeechRec = null;
+    }
+    if (window.MeetCaptionScraper) window.MeetCaptionScraper.stop();
+  }
 
   // ==================== HELPERS ====================
   function getRoomId() {

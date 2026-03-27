@@ -28,7 +28,7 @@ npm install
 npm start
 ```
 
-Relay default: `ws://172.20.10.8:3001`
+Relay default: `ws://localhost:3001`
 
 ### 2. Start the sign planner
 
@@ -37,10 +37,10 @@ cd sign-service
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app:app --host 172.20.10.8 --port 8001
+uvicorn app:app --host 0.0.0.0 --port 8001
 ```
 
-Planner default: `http://172.20.10.8:8001`
+Planner default: `http://localhost:8001`
 
 ### 3. Load the extension
 
@@ -58,8 +58,8 @@ The popup now exposes:
 
 Defaults:
 
-- `ws://172.20.10.8:3001`
-- `http://172.20.10.8:8001`
+- `ws://localhost:3001`
+- `http://localhost:8001`
 
 ## ASL Media Assets
 

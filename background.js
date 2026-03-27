@@ -1,8 +1,8 @@
 // BridgeSign Background Service Worker
 // Manages per-tab relay sessions, sign-planning requests, and the offscreen ASL pipeline.
 
-let RELAY_SERVER_URL = 'ws://172.20.10.8:3001';
-let SIGN_PLAN_SERVER_URL = 'http://172.20.10.8:8001';
+let RELAY_SERVER_URL = 'ws://localhost:3001';
+let SIGN_PLAN_SERVER_URL = 'http://localhost:8001';
 
 const LEGACY_RELAY_URLS = new Set(['ws://localhost:3001']);
 const LEGACY_PLANNER_URLS = new Set(['http://localhost:8001', 'http://127.0.0.1:8001']);
@@ -493,7 +493,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'GET_STATUS') {
-    const session = getPreferredSession();
+    const tabId = msg.tabId || (sender.tab && sender.tab.id);
+    const session = getSession(tabId);
     sendResponse({
       connected: Boolean(session && session.ws && session.ws.readyState === WebSocket.OPEN),
       roomId: session ? session.roomId : null,
@@ -508,59 +509,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // ==================== TAB AUDIO CAPTURE ====================
-  if (msg.type === 'START_TAB_CAPTURE') {
+  if (msg.type === 'FORCE_RECONNECT') {
     const tabId = msg.tabId || (sender.tab && sender.tab.id);
-    if (!tabId) {
-      sendResponse({ success: false, error: 'No tab ID' });
-      return true;
+    const session = getSession(tabId);
+    if (session && session.roomId) {
+      if (session.ws && session.ws.readyState !== WebSocket.CLOSED) {
+        session.ws.close();
+      }
+      session.reconnectAttempts = 0;
+      setTimeout(() => {
+        joinRoom(tabId, session.roomId, session.role);
+      }, 500);
     }
-
-    setupOffscreenDocument()
-      .then(() => waitForOffscreenReady())
-      .then((ready) => {
-        if (!ready) throw new Error('Offscreen document not ready');
-        return new Promise((resolve, reject) => {
-          chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-            } else {
-              resolve(streamId);
-            }
-          });
-        });
-      })
-      .then((streamId) => {
-        // Send stream ID to offscreen document to start recording
-        chrome.runtime.sendMessage({
-          type: 'OFFSCREEN_START_TAB_AUDIO',
-          streamId: streamId,
-          whisperUrl: msg.whisperUrl || 'http://localhost:8090',
-        });
-        activeSignerTabId = tabId;
-        sendResponse({ success: true });
-      })
-      .catch((err) => {
-        console.error('[BridgeSign] Tab capture failed:', err);
-        sendResponse({ success: false, error: err.message });
-      });
-    return true;
-  }
-
-  if (msg.type === 'STOP_TAB_CAPTURE') {
-    chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP_TAB_AUDIO' }).catch(() => {});
     sendResponse({ success: true });
     return true;
   }
 
-  // Forward Whisper transcriptions from offscreen to the signer's content script
-  if (msg.type === 'WHISPER_TRANSCRIPT') {
-    if (activeSignerTabId) {
-      chrome.tabs.sendMessage(activeSignerTabId, {
-        type: 'WHISPER_TRANSCRIPT',
-        data: { text: msg.text, segments: msg.segments },
-      }).catch(() => {});
-    }
-    return false;
-  }
 });

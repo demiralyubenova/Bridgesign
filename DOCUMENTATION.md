@@ -245,7 +245,7 @@ Important characteristics:
 - other content scripts run at `document_idle`
 - host permissions for:
   - `https://meet.google.com/*`
-  - `http://172.20.10.8:8001/*`
+  - `http://localhost:8001/*`
 - CSP allows WASM evaluation for MediaPipe assets
 
 ### `background.js`
@@ -551,8 +551,8 @@ Possible `priority` values:
 
 Default values:
 
-- relay: `ws://172.20.10.8:3001`
-- planner: `http://172.20.10.8:8001`
+- relay: `ws://localhost:3001`
+- planner: `http://localhost:8001`
 
 ### `chrome.storage.local`
 
@@ -590,7 +590,7 @@ npm start
 Default:
 
 ```text
-ws://172.20.10.8:3001
+ws://localhost:3001
 ```
 
 ### Start the Sign Planner
@@ -600,13 +600,13 @@ cd sign-service
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app:app --host 172.20.10.8 --port 8001
+uvicorn app:app --host 0.0.0.0 --port 8001
 ```
 
 Default:
 
 ```text
-http://172.20.10.8:8001
+http://localhost:8001
 ```
 
 ### Load the Extension

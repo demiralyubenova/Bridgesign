@@ -1,24 +1,49 @@
 // BridgeSign Background Service Worker
 // Manages per-tab relay sessions, sign-planning requests, and the offscreen ASL pipeline.
 
-let RELAY_SERVER_URL = 'ws://localhost:3001';
-let SIGN_PLAN_SERVER_URL = 'http://127.0.0.1:8001';
+let RELAY_SERVER_URL = 'ws://172.20.10.8:3001';
+let SIGN_PLAN_SERVER_URL = 'http://172.20.10.8:8001';
+
+const LEGACY_RELAY_URLS = new Set(['ws://localhost:3001']);
+const LEGACY_PLANNER_URLS = new Set(['http://localhost:8001', 'http://127.0.0.1:8001']);
+
+function normalizeRelayUrl(url) {
+  return LEGACY_RELAY_URLS.has(url) ? RELAY_SERVER_URL : url;
+}
+
+function normalizePlannerUrl(url) {
+  return LEGACY_PLANNER_URLS.has(url) ? SIGN_PLAN_SERVER_URL : url;
+}
 
 chrome.storage.sync.get(
   ['bridgesignServerUrl', 'bridgesignPlannerUrl', 'signflowServerUrl', 'signflowPlannerUrl'],
   (res) => {
-    RELAY_SERVER_URL = res.bridgesignServerUrl || res.signflowServerUrl || RELAY_SERVER_URL;
-    SIGN_PLAN_SERVER_URL = res.bridgesignPlannerUrl || res.signflowPlannerUrl || SIGN_PLAN_SERVER_URL;
+    const relayUrl = normalizeRelayUrl(res.bridgesignServerUrl || res.signflowServerUrl || RELAY_SERVER_URL);
+    const plannerUrl = normalizePlannerUrl(res.bridgesignPlannerUrl || res.signflowPlannerUrl || SIGN_PLAN_SERVER_URL);
+
+    RELAY_SERVER_URL = relayUrl;
+    SIGN_PLAN_SERVER_URL = plannerUrl;
+
+    if (res.bridgesignServerUrl !== relayUrl || res.bridgesignPlannerUrl !== plannerUrl) {
+      chrome.storage.sync.set({
+        bridgesignServerUrl: relayUrl,
+        bridgesignPlannerUrl: plannerUrl,
+      });
+    }
   }
 );
 
 const tabSessions = new Map(); // tabId -> { port, ws, roomId, role, reconnectAttempts, latencyMs, pingInterval, lastError }
+const MAX_PENDING_MESSAGES = 50;
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
   if (namespace !== 'sync') return;
 
   if (changes.bridgesignServerUrl || changes.signflowServerUrl) {
-    RELAY_SERVER_URL = changes.bridgesignServerUrl?.newValue || changes.signflowServerUrl?.newValue || RELAY_SERVER_URL;
+    const rawRelayUrl = changes.bridgesignServerUrl?.newValue || changes.signflowServerUrl?.newValue || RELAY_SERVER_URL;
+    const nextRelayUrl = normalizeRelayUrl(rawRelayUrl);
+    if (nextRelayUrl === RELAY_SERVER_URL) return;
+    RELAY_SERVER_URL = nextRelayUrl;
     console.log('[BridgeSign] Server URL updated:', RELAY_SERVER_URL);
     for (const session of tabSessions.values()) {
       if (session.ws && session.ws.readyState !== WebSocket.CLOSED) {
@@ -28,7 +53,10 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   }
 
   if (changes.bridgesignPlannerUrl || changes.signflowPlannerUrl) {
-    SIGN_PLAN_SERVER_URL = changes.bridgesignPlannerUrl?.newValue || changes.signflowPlannerUrl?.newValue || SIGN_PLAN_SERVER_URL;
+    const rawPlannerUrl = changes.bridgesignPlannerUrl?.newValue || changes.signflowPlannerUrl?.newValue || SIGN_PLAN_SERVER_URL;
+    const nextPlannerUrl = normalizePlannerUrl(rawPlannerUrl);
+    if (nextPlannerUrl === SIGN_PLAN_SERVER_URL) return;
+    SIGN_PLAN_SERVER_URL = nextPlannerUrl;
     console.log('[BridgeSign] Sign planner URL updated:', SIGN_PLAN_SERVER_URL);
   }
 });
@@ -42,6 +70,8 @@ chrome.runtime.onConnect.addListener((port) => {
     ws: null,
     roomId: null,
     role: null,
+    peerCount: 0,
+    pendingMessages: [],
     reconnectAttempts: 0,
     latencyMs: 0,
     pingInterval: null,
@@ -127,6 +157,7 @@ function joinRoom(tabId, roomId, role) {
 
   session.roomId = roomId;
   if (role) session.role = role;
+  session.peerCount = 0;
   session.lastError = null;
 
   if (session.ws && session.ws.readyState === WebSocket.OPEN) {
@@ -153,6 +184,7 @@ function attachWebSocketHandlers(tabId, session) {
 
     liveSession.reconnectAttempts = 0;
     socket.send(JSON.stringify({ type: 'JOIN', roomId: liveSession.roomId, role: liveSession.role }));
+    flushPendingMessages(liveSession);
     sendToTab(tabId, { type: 'STATE_UPDATE', data: { connected: true, roomId: liveSession.roomId } });
 
     clearPingInterval(liveSession);
@@ -169,13 +201,25 @@ function attachWebSocketHandlers(tabId, session) {
 
     try {
       const msg = JSON.parse(event.data);
-      if (msg.type === 'CAPTION') {
+      if (msg.type === 'ROOM_INFO') {
+        liveSession.peerCount = msg.data?.peers || 0;
+        sendToTab(tabId, {
+          type: 'STATE_UPDATE',
+          data: {
+            connected: true,
+            roomId: liveSession.roomId,
+            peers: liveSession.peerCount,
+          },
+        });
+      } else if (msg.type === 'CAPTION') {
         sendToTab(tabId, { type: 'REMOTE_CAPTION', data: msg.data });
       } else if (msg.type === 'SIGN_PLAN') {
         sendToTab(tabId, { type: 'REMOTE_SIGN_PLAN', data: msg.data });
       } else if (msg.type === 'PEER_JOINED') {
+        liveSession.peerCount = msg.data?.count ? Math.max(0, msg.data.count - 1) : liveSession.peerCount + 1;
         sendToTab(tabId, { type: 'PEER_JOINED', data: msg.data });
       } else if (msg.type === 'PEER_LEFT') {
+        liveSession.peerCount = typeof msg.data?.count === 'number' ? Math.max(0, msg.data.count) : Math.max(0, liveSession.peerCount - 1);
         sendToTab(tabId, { type: 'PEER_LEFT', data: msg.data });
       } else if (msg.type === 'PONG') {
         liveSession.latencyMs = Date.now() - msg.timestamp;
@@ -202,6 +246,7 @@ function attachWebSocketHandlers(tabId, session) {
 
     clearPingInterval(liveSession);
     liveSession.latencyMs = 0;
+    liveSession.peerCount = 0;
     liveSession.ws = null;
     sendToTab(tabId, { type: 'STATE_UPDATE', data: { connected: false, roomId: liveSession.roomId } });
 
@@ -247,9 +292,7 @@ function sendCaption(tabId, data) {
   const session = getSession(tabId);
   if (!session || !data) return;
 
-  if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-    session.ws.send(JSON.stringify({ type: 'CAPTION', data }));
-  }
+  sendOrQueueSessionMessage(session, { type: 'CAPTION', data });
 
   if (data.source === 'speech' && data.partial === false) {
     requestAndSendSignPlan(tabId, data);
@@ -288,20 +331,51 @@ async function requestAndSendSignPlan(tabId, data) {
       },
     });
 
-    if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-      session.ws.send(JSON.stringify({
-        type: 'SIGN_PLAN',
-        data: {
-          source: data.source,
-          text: data.text,
-          signPlan,
-          timestamp: Date.now(),
-        },
-      }));
-    }
+    sendOrQueueSessionMessage(session, {
+      type: 'SIGN_PLAN',
+      data: {
+        source: data.source,
+        text: data.text,
+        signPlan,
+        timestamp: Date.now(),
+      },
+    });
   } catch (error) {
     session.lastError = error && error.message ? error.message : 'Failed to build sign plan';
     console.warn('[BridgeSign] Failed to build sign plan:', session.lastError);
+  }
+}
+
+function sendOrQueueSessionMessage(session, payload) {
+  if (!session || !payload) return false;
+
+  if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+    session.ws.send(JSON.stringify(payload));
+    return true;
+  }
+
+  if (session.ws && session.ws.readyState === WebSocket.CONNECTING) {
+    session.pendingMessages.push(payload);
+    if (session.pendingMessages.length > MAX_PENDING_MESSAGES) {
+      session.pendingMessages.shift();
+    }
+    return false;
+  }
+
+  session.pendingMessages.push(payload);
+  if (session.pendingMessages.length > MAX_PENDING_MESSAGES) {
+    session.pendingMessages.shift();
+  }
+
+  return false;
+}
+
+function flushPendingMessages(session) {
+  if (!session || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+
+  while (session.pendingMessages.length > 0) {
+    const payload = session.pendingMessages.shift();
+    session.ws.send(JSON.stringify(payload));
   }
 }
 
@@ -420,7 +494,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({
       connected: Boolean(session && session.ws && session.ws.readyState === WebSocket.OPEN),
       roomId: session ? session.roomId : null,
-      peers: tabSessions.size,
+      peers: session ? session.peerCount : 0,
       error: session ? session.lastError : null,
       latency: session ? session.latencyMs : 0,
       plannerUrl: SIGN_PLAN_SERVER_URL,

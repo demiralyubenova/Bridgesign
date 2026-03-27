@@ -6,26 +6,46 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveBtn = document.getElementById('btn-save-server');
   const plannerInput = document.getElementById('info-planner');
   const savePlannerBtn = document.getElementById('btn-save-planner');
+  const relayDefaultUrl = 'ws://172.20.10.8:3001';
+  const plannerDefaultUrl = 'http://172.20.10.8:8001';
+
+  function normalizeRelayUrl(url) {
+    return url === 'ws://localhost:3001' ? relayDefaultUrl : url;
+  }
+
+  function normalizePlannerUrl(url) {
+    return url === 'http://localhost:8001' || url === 'http://127.0.0.1:8001'
+      ? plannerDefaultUrl
+      : url;
+  }
 
   // Load saved server URL
   chrome.storage.sync.get(['bridgesignServerUrl', 'bridgesignPlannerUrl', 'signflowServerUrl', 'signflowPlannerUrl'], (res) => {
     if (res.bridgesignServerUrl || res.signflowServerUrl) {
-      serverInput.value = res.bridgesignServerUrl || res.signflowServerUrl;
+      serverInput.value = normalizeRelayUrl(res.bridgesignServerUrl || res.signflowServerUrl);
     } else {
-      serverInput.value = 'ws://localhost:3001';
+      serverInput.value = relayDefaultUrl;
     }
 
     if (res.bridgesignPlannerUrl || res.signflowPlannerUrl) {
-      plannerInput.value = res.bridgesignPlannerUrl || res.signflowPlannerUrl;
+      plannerInput.value = normalizePlannerUrl(res.bridgesignPlannerUrl || res.signflowPlannerUrl);
     } else {
-      plannerInput.value = 'http://127.0.0.1:8001';
+      plannerInput.value = plannerDefaultUrl;
+    }
+
+    if (res.bridgesignServerUrl !== serverInput.value || res.bridgesignPlannerUrl !== plannerInput.value) {
+      chrome.storage.sync.set({
+        bridgesignServerUrl: serverInput.value,
+        bridgesignPlannerUrl: plannerInput.value,
+      });
     }
   });
 
   // Save server URL
   saveBtn.addEventListener('click', () => {
-    const newUrl = serverInput.value.trim();
+    const newUrl = normalizeRelayUrl(serverInput.value.trim());
     if (newUrl) {
+      serverInput.value = newUrl;
       chrome.storage.sync.set({ bridgesignServerUrl: newUrl }, () => {
         saveBtn.textContent = 'Saved!';
         saveBtn.classList.add('success');
@@ -38,8 +58,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   savePlannerBtn.addEventListener('click', () => {
-    const newUrl = plannerInput.value.trim();
+    const newUrl = normalizePlannerUrl(plannerInput.value.trim());
     if (newUrl) {
+      plannerInput.value = newUrl;
       chrome.storage.sync.set({ bridgesignPlannerUrl: newUrl }, () => {
         savePlannerBtn.textContent = 'Saved!';
         savePlannerBtn.classList.add('success');

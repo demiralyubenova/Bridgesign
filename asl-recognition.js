@@ -494,7 +494,7 @@ const ASLRecognition = (() => {
     resetWordGestureState();
     currentLetter = null;
     letterCount = 0;
-    checkAndReset(false);
+    emitBufferedCaption(false);
   }
 
   function processWordGesture(word, immediate) {
@@ -530,10 +530,15 @@ const ASLRecognition = (() => {
 
   function processLetter(letter) {
     resetWordGestureState();
+    const now = Date.now();
 
     if (letter === 'nothing' || letter === 'del' || letter === 'space') {
+      if (letter === 'nothing' && now - lastLetterTime > CONFIG.SPACE_TIMEOUT_MS && confirmedWord.length > 0) {
+        commitSpelledWord();
+        emitBufferedCaption(false);
+      }
       if (letter === 'space' && commitSpelledWord()) {
-        checkAndReset(false);
+        emitBufferedCaption(false);
       }
       if (letter === 'del' && confirmedWord.length > 0) {
         confirmedWord = confirmedWord.slice(0, -1);
@@ -544,12 +549,10 @@ const ASLRecognition = (() => {
       return;
     }
 
-    const now = Date.now();
-
     // Auto-space after timeout
     if (now - lastLetterTime > CONFIG.SPACE_TIMEOUT_MS && confirmedWord.length > 0) {
       commitSpelledWord();
-      checkAndReset(false);
+      emitBufferedCaption(false);
     }
 
     if (letter === currentLetter) {
@@ -558,7 +561,7 @@ const ASLRecognition = (() => {
         confirmedWord += letter;
         lastLetterTime = now;
         letterCount = 0;
-        checkAndReset(true);
+        emitBufferedCaption(true);
       }
     } else {
       currentLetter = letter;
@@ -566,12 +569,12 @@ const ASLRecognition = (() => {
     }
   }
 
-  // Check if text is too long and reset if needed
-  function checkAndReset(partial) {
-    const total = buildCurrentText();
-    if (total.length >= CONFIG.MAX_TEXT_LENGTH) {
-      // Emit full text as final, then wipe everything
-      emitCaption(total.trim(), false);
+  function emitBufferedCaption(partial) {
+    const total = buildCurrentText().trim();
+    if (!total) return;
+
+    if (!partial || total.length >= CONFIG.MAX_TEXT_LENGTH) {
+      emitCaption(total, false);
       committedText = '';
       confirmedWord = '';
     } else {

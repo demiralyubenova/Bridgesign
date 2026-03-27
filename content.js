@@ -20,7 +20,9 @@
       opacity: 0.9,
       textColor: '#e5e5e5',
     },
-    toolbar: null
+    toolbar: null,
+    autoInjectDisabled: false,
+    recentLocalSpeech: [],
   };
 
   // ==================== COMPONENT: VoiceToolbar ====================
@@ -38,6 +40,13 @@
       this._startListeningAnimation();
     }
 
+    destroy() {
+      if (this._waveFrame) {
+        cancelAnimationFrame(this._waveFrame);
+        this._waveFrame = null;
+      }
+    }
+
     addTranscript({ speaker, text, partial = false }) {
       if (partial) {
         const last = state.transcripts[state.transcripts.length - 1];
@@ -47,6 +56,11 @@
           state.transcripts.push({ speaker, text, partial: true });
         }
       } else {
+        const lastFinal = state.transcripts[state.transcripts.length - 1];
+        if (lastFinal && !lastFinal.partial && lastFinal.speaker === speaker && lastFinal.text === text) {
+          return;
+        }
+
         // Remove existing partial of same speaker if exists
         state.transcripts = state.transcripts.filter(t => !(t.speaker === speaker && t.partial));
         state.transcripts.push({ speaker, text, partial: false });
@@ -54,7 +68,10 @@
         // Store for download
         const now = new Date();
         const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
-        state.fullTranscript.push({ timestamp: timeStr, speaker, text });
+        const lastSaved = state.fullTranscript[state.fullTranscript.length - 1];
+        if (!lastSaved || lastSaved.speaker !== speaker || lastSaved.text !== text) {
+          state.fullTranscript.push({ timestamp: timeStr, speaker, text });
+        }
       }
 
       if (state.transcripts.length > 6) state.transcripts.shift();
@@ -208,7 +225,7 @@
           } else if (action === 'role') {
             switchRole();
           } else if (action === 'leave') {
-            window.location.href = 'https://meet.google.com';
+            leaveMeetSession();
           }
         });
       });
@@ -274,6 +291,16 @@
   // ==================== RECOGNITION CALLS ====================
   const port = chrome.runtime.connect({ name: 'bridgesign' });
 
+  function sendPortMessage(message) {
+    try {
+      port.postMessage(message);
+      return true;
+    } catch (error) {
+      console.warn('[BridgeSign] Failed to send message to background:', error);
+      return false;
+    }
+  }
+
   port.onMessage.addListener((msg) => {
     switch (msg.type) {
       case 'STATE_UPDATE':
@@ -306,6 +333,45 @@
   // ==================== CORE FUNCTIONS ====================
   function injectUI() {
     showRoleSelector();
+  }
+
+  function normalizeTranscriptText(text) {
+    return (text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function rememberLocalSpeech(text) {
+    const normalized = normalizeTranscriptText(text);
+    if (!normalized) return;
+
+    const cutoff = Date.now() - 5000;
+    state.recentLocalSpeech = state.recentLocalSpeech.filter((entry) => entry.ts >= cutoff);
+    state.recentLocalSpeech.push({ text: normalized, ts: Date.now() });
+  }
+
+  function isLikelyOwnMeetCaption(text) {
+    const normalized = normalizeTranscriptText(text);
+    if (!normalized) return false;
+
+    const cutoff = Date.now() - 5000;
+    state.recentLocalSpeech = state.recentLocalSpeech.filter((entry) => entry.ts >= cutoff);
+    return state.recentLocalSpeech.some((entry) => entry.text === normalized);
+  }
+
+  function startMeetCaptionCapture() {
+    if (!window.__BridgeSignCaptionScraper) return;
+
+    window.__BridgeSignCaptionScraper.start((cap) => {
+      if (!cap || !cap.text) return;
+      if (state.role === 'speaker' && isLikelyOwnMeetCaption(cap.text)) return;
+
+      if (state.toolbar) {
+        state.toolbar.addTranscript({
+          speaker: cap.speaker || 'Them',
+          text: cap.text,
+          partial: false,
+        });
+      }
+    });
   }
 
   function showRoleSelector() {
@@ -391,7 +457,7 @@
     initDraggable(root, document.getElementById('sf-drag-handle'));
 
     // Join room
-    port.postMessage({ type: 'JOIN_ROOM', roomId: getRoomId(), role: state.role });
+    sendPortMessage({ type: 'JOIN_ROOM', roomId: getRoomId(), role: state.role });
 
     // Both roles burn subtitles into the camera feed
     document.dispatchEvent(new CustomEvent('bridgesign-vcam-activate'));
@@ -401,14 +467,9 @@
       startSpeechRecognition();
     } else {
       await startASLRecognition();
-
-      // Start scraping Meet's built-in CC so the signer can read speech
-      if (window.__BridgeSignCaptionScraper) {
-        window.__BridgeSignCaptionScraper.start((cap) => {
-          state.toolbar.addTranscript({ speaker: cap.speaker, text: cap.text, partial: false });
-        });
-      }
     }
+
+    startMeetCaptionCapture();
 
     // Load settings
     chrome.storage.local.get(['sfSettings', 'overlayPos'], (res) => {
@@ -434,21 +495,99 @@
   }
 
   function switchRole() {
+    endSession();
+    showRoleSelector();
+  }
+
+  function stopSessionFeatures() {
+    if (state.toolbar) {
+      state.toolbar.setListening(false);
+    }
+
     if (state.role === 'speaker') {
       stopSpeechRecognition();
-    } else {
+    } else if (state.role === 'signer') {
       stopASLRecognition();
-      if (window.__BridgeSignCaptionScraper) window.__BridgeSignCaptionScraper.stop();
     }
+
+    if (window.__BridgeSignCaptionScraper) window.__BridgeSignCaptionScraper.stop();
+
     document.dispatchEvent(new CustomEvent('bridgesign-vcam-stop'));
+
     if (window.SignPlayer) {
       window.SignPlayer.reset();
     }
-    const root = document.getElementById('bridgesign-root');
-    if (root) root.remove();
-    const pip = document.getElementById('sf-pip-container');
-    if (pip) pip.remove();
-    showRoleSelector();
+  }
+
+  function removeInjectedUi() {
+    if (state.toolbar) {
+      state.toolbar.destroy();
+      state.toolbar = null;
+    }
+
+    [
+      'bridgesign-root',
+      'bridgesign-role-selector',
+      'sf-pip-container',
+      'sf-toast-container',
+    ].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    });
+  }
+
+  function resetSessionState() {
+    state.connected = false;
+    state.roomId = null;
+    state.role = null;
+    state.isListening = false;
+    state.transcripts = [];
+    state.fullTranscript = [];
+    state.recentLocalSpeech = [];
+  }
+
+  function endSession({ notifyBackground = true } = {}) {
+    if (notifyBackground && (state.connected || state.roomId)) {
+      sendPortMessage({ type: 'LEAVE_ROOM' });
+    }
+
+    stopSessionFeatures();
+    removeInjectedUi();
+    resetSessionState();
+  }
+
+  function clickNativeLeaveButton() {
+    const selectors = [
+      'button[aria-label*="Leave call"]',
+      'button[aria-label*="leave call"]',
+      'button[aria-label*="End call"]',
+      'button[aria-label*="hang up"]',
+      'button[jsname="CQylAd"]',
+    ];
+
+    for (const selector of selectors) {
+      const button = document.querySelector(selector);
+      if (button) {
+        button.click();
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function leaveMeetSession() {
+    state.autoInjectDisabled = true;
+    endSession();
+
+    const clickedNativeLeave = clickNativeLeaveButton();
+    const fallbackDelayMs = clickedNativeLeave ? 700 : 0;
+
+    window.setTimeout(() => {
+      if (isMeetRoomPage()) {
+        window.location.assign('https://meet.google.com/');
+      }
+    }, fallbackDelayMs);
   }
 
   // ==================== RECOGNITION (STUBS) ====================
@@ -470,16 +609,24 @@
         else interim += e.results[i][0].transcript;
       }
       if (final) {
-        state.toolbar.addTranscript({ speaker: 'You', text: final, partial: false });
+        rememberLocalSpeech(final);
+        if (state.toolbar) {
+          state.toolbar.addTranscript({ speaker: 'You', text: final, partial: false });
+        }
         document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text: final } }));
-        port.postMessage({ type: 'CAPTION', data: { source: 'speech', text: final, partial: false } });
+        sendPortMessage({ type: 'CAPTION', data: { source: 'speech', text: final, partial: false } });
       } else if (interim) {
-        state.toolbar.addTranscript({ speaker: 'You', text: interim, partial: true });
+        rememberLocalSpeech(interim);
+        if (state.toolbar) {
+          state.toolbar.addTranscript({ speaker: 'You', text: interim, partial: true });
+        }
         document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text: interim } }));
-        port.postMessage({ type: 'CAPTION', data: { source: 'speech', text: interim, partial: true } });
+        sendPortMessage({ type: 'CAPTION', data: { source: 'speech', text: interim, partial: true } });
       }
     };
-    speechRec.onstart = () => state.toolbar.setListening(true);
+    speechRec.onstart = () => {
+      if (state.toolbar) state.toolbar.setListening(true);
+    };
     speechRec.onend = () => { if (state.role === 'speaker') speechRec.start(); };
     speechRec.start();
   }
@@ -487,15 +634,17 @@
 
   async function startASLRecognition() {
     if (window.ASLRecognition) {
-      state.toolbar.setListening(true);
+      if (state.toolbar) state.toolbar.setListening(true);
       const result = await window.ASLRecognition.start((text, partial) => {
-        state.toolbar.addTranscript({ speaker: 'You', text, partial });
+        if (state.toolbar) {
+          state.toolbar.addTranscript({ speaker: 'You', text, partial });
+        }
         document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text } }));
-        port.postMessage({ type: 'CAPTION', data: { source: 'sign', text, partial } });
+        sendPortMessage({ type: 'CAPTION', data: { source: 'sign', text, partial } });
       });
 
       if (result !== true) {
-        state.toolbar.setListening(false);
+        if (state.toolbar) state.toolbar.setListening(false);
         showNotification(`⚠️ Signer Failed: ${result || 'Unknown error'}`);
       }
     } else {
@@ -562,18 +711,26 @@
 
   function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+  function isMeetRoomPage() {
+    return /\/[a-z]{3}-[a-z]{4}-[a-z]{3}/.test(window.location.pathname);
+  }
+
   // Init logic
   function check() {
-    const isMeet = /\/[a-z]{3}-[a-z]{4}-[a-z]{3}/.test(window.location.pathname);
-    if (!isMeet) {
-      if (document.getElementById('bridgesign-root')) document.getElementById('bridgesign-root').remove();
+    if (!isMeetRoomPage()) {
+      state.autoInjectDisabled = false;
+      endSession();
       return;
     }
+
+    if (state.autoInjectDisabled) return;
+
     if (document.getElementById('bridgesign-root') || document.getElementById('bridgesign-role-selector')) return;
     if (document.querySelector('video')) injectUI();
   }
 
   check();
   new MutationObserver(check).observe(document.body, { childList: true, subtree: true });
+  window.addEventListener('pagehide', () => endSession(), { capture: true });
 
 })();

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from planner import BASE_DIR, SLT_IMPORT_ERROR, build_sign_plan, slt
+
+
+HOST = os.getenv("HOST", "172.20.10.8")
+PORT = int(os.getenv("PORT", "8001"))
 
 
 class SignPlanRequest(BaseModel):
@@ -43,3 +48,9 @@ def health() -> dict[str, object]:
 @app.post("/api/sign-plan")
 def sign_plan(payload: SignPlanRequest, request: Request) -> dict[str, object]:
     return build_sign_plan(payload.text, base_url=str(request.base_url).rstrip("/"))
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("app:app", host=HOST, port=PORT, reload=False)

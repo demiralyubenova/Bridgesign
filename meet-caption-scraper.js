@@ -9,106 +9,176 @@
 
   let observer = null;
   let callback = null;
-  let lastText = '';
   let debounceTimer = null;
+  const recentCaptions = new Map();
 
-  // Known CSS selectors for Google Meet's caption container.
-  // Meet updates its DOM frequently, so we try multiple selectors.
   const CAPTION_SELECTORS = [
-    'div[class*="iOzk7"]',              // Meet caption container (2024-2026)
-    'div[class*="TBMuR"]',              // Alternative caption wrapper
-    'div[jscontroller][jsname] span[class*="CNusmb"]', // Individual caption spans
-    'div[class*="a4cQT"]',              // Caption region
+    '[aria-live="polite"]',
+    '[aria-live="assertive"]',
+    '[role="status"]',
+    '[role="log"]',
+    'div[class*="iOzk7"]',
+    'div[class*="TBMuR"]',
+    'div[class*="a4cQT"]',
+    'span[class*="CNusmb"]',
   ];
 
-  // Fallback: find any container that looks like captions
-  function findCaptionContainer() {
-    // Try known selectors first
-    for (const sel of CAPTION_SELECTORS) {
-      const el = document.querySelector(sel);
-      if (el) return el;
-    }
+  const SYSTEM_ANNOUNCEMENT_PATTERNS = [
+    /\b(joined|left|joining|rejoined)\b/i,
+    /\b(raised hand|lowered hand)\b/i,
+    /\b(started presenting|stopped presenting|is presenting)\b/i,
+    /\b(muted|unmuted|turned captions on|turned captions off)\b/i,
+    /\b(recording started|recording stopped)\b/i,
+    /\b(entered the meeting|left the meeting)\b/i,
+    /се присъедини/i,
+    /напусна/i,
+    /влезе в срещата/i,
+    /излезе от срещата/i,
+    /вдигна ръка/i,
+    /свали ръка/i,
+    /започна да представя/i,
+    /спря да представя/i,
+    /пусна надписите/i,
+    /спря надписите/i,
+  ];
 
-    // Heuristic fallback: look for a container at the bottom of the screen
-    // with short text nodes that updates frequently
-    const candidates = document.querySelectorAll('div[jscontroller]');
-    for (const el of candidates) {
-      const rect = el.getBoundingClientRect();
-      // Captions are typically at the bottom third of the viewport
-      if (rect.top > window.innerHeight * 0.6 && rect.height < 200) {
-        const text = el.innerText.trim();
-        if (text.length > 0 && text.length < 500) {
-          return el;
-        }
-      }
-    }
-
-    return null;
+  function normalizeText(text) {
+    return (text || '').replace(/\s+/g, ' ').trim();
   }
 
-  function extractCaptions(container) {
-    if (!container) return [];
+  function pruneRecentCaptions(now = Date.now()) {
+    for (const [key, ts] of recentCaptions.entries()) {
+      if (now - ts > 4000) {
+        recentCaptions.delete(key);
+      }
+    }
+  }
 
-    const results = [];
+  function isSystemAnnouncement(text) {
+    const normalized = normalizeText(text).toLowerCase();
+    if (!normalized) return false;
+    return SYSTEM_ANNOUNCEMENT_PATTERNS.some((pattern) => pattern.test(normalized));
+  }
 
-    // Method 1: Look for speaker name + text pairs
-    // Meet typically renders: <div>[Speaker Name]</div><div>[Caption Text]</div>
-    const spans = container.querySelectorAll('span');
-    if (spans.length >= 2) {
-      // Group consecutive spans: first = name, rest = text
-      let currentSpeaker = '';
-      let currentText = '';
+  function isVisible(el) {
+    if (!(el instanceof Element)) return false;
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0
+      && rect.height > 0
+      && style.visibility !== 'hidden'
+      && style.display !== 'none';
+  }
 
-      for (const span of spans) {
-        const text = span.innerText.trim();
-        if (!text) continue;
+  function isLikelyCaptionNode(el) {
+    if (!(el instanceof Element) || !isVisible(el)) return false;
+    if (el.querySelector('button, input, textarea')) return false;
 
-        // Heuristic: speaker names are short and don't end with punctuation
-        if (text.length < 30 && !text.match(/[.!?,;:]$/) && !currentSpeaker) {
-          currentSpeaker = text;
-        } else {
-          currentText += (currentText ? ' ' : '') + text;
+    const text = normalizeText(el.innerText);
+    if (!text || text.length < 2 || text.length > 280) return false;
+
+    const rect = el.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const isCentered = Math.abs(centerX - window.innerWidth / 2) < window.innerWidth * 0.35;
+    const isBottomBand = rect.top >= window.innerHeight * 0.38 && rect.bottom <= window.innerHeight;
+    const isLiveRegion = el.matches('[aria-live], [role="status"], [role="log"]');
+    const lines = (el.innerText || '').split('\n').map(normalizeText).filter(Boolean);
+
+    return rect.height <= 240 && lines.length <= 4 && (isLiveRegion || (isCentered && isBottomBand));
+  }
+
+  function collectCandidateRoots(mutations = []) {
+    const roots = new Set();
+
+    function addNode(node) {
+      let el = node instanceof Element ? node : node && node.parentElement;
+      let depth = 0;
+
+      while (el && depth < 5) {
+        if (isLikelyCaptionNode(el)) {
+          roots.add(el);
         }
-      }
-
-      if (currentText) {
-        results.push({
-          speaker: currentSpeaker || 'Them',
-          text: currentText
-        });
+        el = el.parentElement;
+        depth++;
       }
     }
 
-    // Method 2: Simple innerText fallback
-    if (results.length === 0) {
-      const raw = container.innerText.trim();
-      if (raw && raw !== lastText) {
-        results.push({ speaker: 'Them', text: raw });
-      }
+    for (const selector of CAPTION_SELECTORS) {
+      document.querySelectorAll(selector).forEach((el) => addNode(el));
     }
 
-    return results;
+    for (const mutation of mutations) {
+      addNode(mutation.target);
+      mutation.addedNodes.forEach((node) => addNode(node));
+    }
+
+    return Array.from(roots);
+  }
+
+  function collapseLines(lines) {
+    const result = [];
+
+    for (const rawLine of lines) {
+      const line = normalizeText(rawLine);
+      if (!line) continue;
+      if (result[result.length - 1] === line) continue;
+      result.push(line);
+    }
+
+    return result;
+  }
+
+  function extractCaption(root) {
+    if (!root) return null;
+
+    const lines = collapseLines((root.innerText || '').split('\n'));
+    if (!lines.length) return null;
+
+    const combined = normalizeText(lines.join(' '));
+    if (!combined || isSystemAnnouncement(combined)) return null;
+
+    let speaker = 'Them';
+    let text = combined;
+
+    if (lines.length > 1 && lines[0].length <= 40) {
+      speaker = lines[0];
+      text = lines.slice(1).join(' ');
+    }
+
+    text = normalizeText(text);
+    if (!text || isSystemAnnouncement(`${speaker} ${text}`)) return null;
+
+    return { speaker, text };
+  }
+
+  function emitCaption(entry) {
+    if (!callback || !entry || !entry.text) return;
+
+    const now = Date.now();
+    const key = `${entry.speaker}|${entry.text}`.toLowerCase();
+    pruneRecentCaptions(now);
+
+    if (recentCaptions.has(key)) return;
+
+    recentCaptions.set(key, now);
+    callback(entry);
+  }
+
+  function scanCaptions(mutations = []) {
+    const roots = collectCandidateRoots(mutations);
+    for (const root of roots) {
+      emitCaption(extractCaption(root));
+    }
   }
 
   function startObserving(cb) {
     callback = cb;
 
-    // Watch the entire body for caption containers appearing/updating
-    observer = new MutationObserver(() => {
-      // Debounce to avoid firing on every character
+    observer = new MutationObserver((mutations) => {
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        const container = findCaptionContainer();
-        if (!container) return;
-
-        const captions = extractCaptions(container);
-        for (const cap of captions) {
-          if (cap.text && cap.text !== lastText) {
-            lastText = cap.text;
-            if (callback) callback(cap);
-          }
-        }
-      }, 150);
+        scanCaptions(mutations);
+      }, 120);
     });
 
     observer.observe(document.body, {
@@ -116,6 +186,8 @@
       subtree: true,
       characterData: true,
     });
+
+    scanCaptions();
   }
 
   function stopObserving() {
@@ -125,7 +197,7 @@
     }
     clearTimeout(debounceTimer);
     callback = null;
-    lastText = '';
+    recentCaptions.clear();
   }
 
   // ==================== PUBLIC API ====================

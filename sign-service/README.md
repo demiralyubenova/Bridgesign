@@ -31,7 +31,7 @@ cd sign-service
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app:app --host 0.0.0.0 --port 8001
+uvicorn app:app --host 172.20.10.8 --port 8001
 ```
 
 ## Media layout

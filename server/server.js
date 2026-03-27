@@ -4,6 +4,7 @@
 const { WebSocketServer } = require('ws');
 const http = require('http');
 
+const HOST = process.env.HOST || '172.20.10.8';
 const PORT = process.env.PORT || 3001;
 const MAX_ROOM_SIZE = parseInt(process.env.MAX_ROOM_SIZE || "2", 10);
 const MAX_MSG_SIZE = 4096;
@@ -26,8 +27,8 @@ const server = http.createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ server, maxPayload: MAX_MSG_SIZE });
-server.listen(PORT, () => {
-  console.log(`\n  🤟 BridgeSign Relay Server\n  ───────────────────────\n  Port: ${PORT}\n  Status: Ready\n`);
+server.listen(PORT, HOST, () => {
+  console.log(`\n  🤟 BridgeSign Relay Server\n  ───────────────────────\n  Host: ${HOST}\n  Port: ${PORT}\n  Status: Ready\n`);
 });
 
 wss.on('connection', (ws) => {

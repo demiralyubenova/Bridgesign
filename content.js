@@ -467,6 +467,9 @@
       startSpeechRecognition();
     } else {
       await startASLRecognition();
+
+      // Start scraping Meet's built-in CC so the signer can read speech
+      startMeetCaptionScraping();
     }
 
     startMeetCaptionCapture();
@@ -508,6 +511,7 @@
       stopSpeechRecognition();
     } else if (state.role === 'signer') {
       stopASLRecognition();
+      stopMeetCaptionScraping();
     }
 
     if (window.__BridgeSignCaptionScraper) window.__BridgeSignCaptionScraper.stop();
@@ -652,6 +656,43 @@
     }
   }
   function stopASLRecognition() { if (window.ASLRecognition) window.ASLRecognition.stop(); }
+
+  // ==================== TAB AUDIO CAPTURE + WHISPER ====================
+  function startMeetCaptionScraping() {
+    // We cannot start tabCapture from the content script directly because it lacks activeTab permission.
+    // Instead, prompt the user to click the extension icon.
+    showNotification('💡 Click the BridgeSign extension icon and select "Start Audio Capture" for live subtitles.');
+  }
+
+  // Listen for the background script or popup telling us capture started
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === 'TAB_CAPTURE_STARTED') {
+      showNotification('🎙️ Live speech transcription active');
+    }
+  });
+
+  function stopMeetCaptionScraping() {
+    chrome.runtime.sendMessage({ type: 'STOP_TAB_CAPTURE' });
+    if (window.MeetCaptionScraper) window.MeetCaptionScraper.stop();
+  }
+
+  // Listen for Whisper transcriptions forwarded from background.js
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === 'WHISPER_TRANSCRIPT' && msg.data) {
+      if (state.toolbar && msg.data.text) {
+        state.toolbar.addTranscript({
+          speaker: 'Speaker',
+          text: msg.data.text,
+          partial: false,
+        });
+
+        // Store for download
+        const now = new Date();
+        const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+        state.fullTranscript.push({ timestamp: timeStr, speaker: 'Speaker', text: msg.data.text });
+      }
+    }
+  });
 
   // ==================== HELPERS ====================
   function getRoomId() {

@@ -125,9 +125,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Get role from storage
     chrome.storage.local.get('bridgesignRole', (data) => {
-      infoRole.textContent = data.bridgesignRole
-        ? (data.bridgesignRole === 'signer' ? '🤟 Signer' : '🗣️ Speaker')
+      const role = data.bridgesignRole;
+      infoRole.textContent = role
+        ? (role === 'signer' ? '🤟 Signer' : '🗣️ Speaker')
         : '—';
+
+      // Show capture button for signers
+      const signerActions = document.getElementById('signer-actions');
+      if (signerActions) {
+        if (role === 'signer' && response.connected) {
+          signerActions.style.display = 'block';
+        } else {
+          signerActions.style.display = 'none';
+        }
+      }
     });
   });
+
+  // Handle Tab Capture from popup
+  const startCaptureBtn = document.getElementById('btn-start-capture');
+  if (startCaptureBtn) {
+    startCaptureBtn.addEventListener('click', () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs || tabs.length === 0) return;
+        const tabId = tabs[0].id;
+        
+        startCaptureBtn.textContent = 'Starting...';
+        startCaptureBtn.disabled = true;
+        
+        chrome.runtime.sendMessage({ 
+          type: 'START_TAB_CAPTURE', 
+          tabId: tabId,
+          whisperUrl: 'http://localhost:8090' 
+        }, (res) => {
+          if (res && res.success) {
+            startCaptureBtn.textContent = 'Audio Capture Active';
+            startCaptureBtn.style.background = '#15803d'; // darker green
+            chrome.tabs.sendMessage(tabId, { type: 'TAB_CAPTURE_STARTED' }).catch(() => {});
+          } else {
+            startCaptureBtn.textContent = '🎙️ Start Audio Capture';
+            startCaptureBtn.disabled = false;
+            const errBox = document.getElementById('popup-error');
+            if (errBox) {
+              errBox.textContent = 'Capture failed: ' + (res ? res.error : 'Unknown error');
+              errBox.style.display = 'block';
+            }
+          }
+        });
+      });
+    });
+  }
 });

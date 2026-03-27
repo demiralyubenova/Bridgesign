@@ -1,55 +1,72 @@
-// BridgeSign Meet Caption Scraper
-// Uses MutationObserver to read Google Meet's built-in Closed Captions
-// and exposes them to content.js so the signer can see what others are saying.
+// SignFlow Meet Caption Scraper
+// Scrapes Google Meet's built-in captions via MutationObserver
+// so the ASL-signer user gets live subtitles without requiring
+// other participants to install the extension.
 
-(function () {
+const MeetCaptionScraper = (() => {
   'use strict';
 
-  if (window.__BridgeSignCaptionScraper) return;
-
+  // ==================== STATE ====================
+  let isActive = false;
   let observer = null;
-  let callback = null;
-  let debounceTimer = null;
-  const recentCaptions = new Map();
+  let captionCallback = null;
+  let pollIntervalId = null;
+  let captionContainer = null;
+  let lastCaptionText = '';
+  let lastSpeaker = '';
+
+  // ==================== SELECTOR STRATEGIES ====================
+  // Google Meet changes DOM structure frequently. We use multiple
+  // strategies to find the caption container, ordered by reliability.
 
   const CAPTION_SELECTORS = [
-    '[aria-live="polite"]',
-    '[aria-live="assertive"]',
-    '[role="status"]',
-    '[role="log"]',
-    'div[class*="iOzk7"]',
-    'div[class*="TBMuR"]',
-    'div[class*="a4cQT"]',
-    'span[class*="CNusmb"]',
+    // 2025-2026 known caption container selectors
+    'div.a4cQT',                           // Classic container
+    'div[jscontroller] div.iOzk7',         // Caption text wrapper
+    'div.TBMuR.bj4p3b',                    // Outer caption bar
+    'div[class*="caption"]',               // Fuzzy fallback
   ];
 
-  const SYSTEM_ANNOUNCEMENT_PATTERNS = [
-    /\b(joined|left|joining|rejoined)\b/i,
-    /\b(raised hand|lowered hand)\b/i,
-    /\b(started presenting|stopped presenting|is presenting)\b/i,
-    /\b(muted|unmuted|turned captions on|turned captions off)\b/i,
-    /\b(recording started|recording stopped)\b/i,
-    /\b(entered the meeting|left the meeting)\b/i,
-    /се присъедини/i,
-    /напусна/i,
-    /влезе в срещата/i,
-    /излезе от срещата/i,
-    /вдигна ръка/i,
-    /свали ръка/i,
-    /започна да представя/i,
-    /спря да представя/i,
-    /пусна надписите/i,
-    /спря надписите/i,
+  // Speaker name selectors within a caption bubble
+  const SPEAKER_SELECTORS = [
+    'div.zs7s8d.jxFHg',     // Speaker name element
+    'span.CNusmb',           // Alternative speaker name
+    'div[class*="speaker"]', // Fuzzy fallback
   ];
 
-  function normalizeText(text) {
-    return (text || '').replace(/\s+/g, ' ').trim();
-  }
+  // Caption text selectors within a caption bubble
+  const TEXT_SELECTORS = [
+    'span.VbkSUe',             // Caption text span
+    'div.iTTPOb.VbkSUe span',  // Nested text span
+    'span[class*="caption"]',  // Fuzzy fallback
+  ];
 
-  function pruneRecentCaptions(now = Date.now()) {
-    for (const [key, ts] of recentCaptions.entries()) {
-      if (now - ts > 4000) {
-        recentCaptions.delete(key);
+  // ==================== FINDING CAPTIONS ====================
+
+  /**
+   * Attempts to locate the caption container using multiple selector strategies.
+   * Falls back to a heuristic search if none of the known selectors work.
+   */
+  function findCaptionContainer() {
+    // Strategy 1: Try known selectors
+    for (const sel of CAPTION_SELECTORS) {
+      const el = document.querySelector(sel);
+      if (el && el.offsetHeight > 0) return el;
+    }
+
+    // Strategy 2: Heuristic — look for a bottom-positioned container
+    // with short, rapidly changing text content (caption-like behavior)
+    const candidates = document.querySelectorAll('div[jscontroller]');
+    for (const c of candidates) {
+      const rect = c.getBoundingClientRect();
+      // Captions usually sit in the bottom 20% of the viewport
+      if (
+        rect.bottom > window.innerHeight * 0.75 &&
+        rect.height > 20 &&
+        rect.height < 200 &&
+        c.innerText.trim().length > 0
+      ) {
+        return c;
       }
     }
   }
@@ -60,165 +77,247 @@
     return SYSTEM_ANNOUNCEMENT_PATTERNS.some((pattern) => pattern.test(normalized));
   }
 
-  function isVisible(el) {
-    if (!(el instanceof Element)) return false;
-    const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return rect.width > 0
-      && rect.height > 0
-      && style.visibility !== 'hidden'
-      && style.display !== 'none';
-  }
+  /**
+   * Extract speaker name and text from a caption element.
+   */
+  function extractCaptionData(container) {
+    const results = [];
 
-  function isLikelyCaptionNode(el) {
-    if (!(el instanceof Element) || !isVisible(el)) return false;
-    if (el.querySelector('button, input, textarea')) return false;
+    // Google Meet renders captions as individual bubbles per speaker.
+    // Each bubble usually has a speaker name and a text span.
+    const seen = new Set();
 
-    const text = normalizeText(el.innerText);
-    if (!text || text.length < 2 || text.length > 280) return false;
+    // Attempt structured extraction first
+    for (const sel of SPEAKER_SELECTORS) {
+      const speakerEls = container.querySelectorAll(sel);
+      for (const speakerEl of speakerEls) {
+        const speaker = speakerEl.textContent.trim();
+        if (!speaker) continue;
 
-    const rect = el.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const isCentered = Math.abs(centerX - window.innerWidth / 2) < window.innerWidth * 0.35;
-    const isBottomBand = rect.top >= window.innerHeight * 0.38 && rect.bottom <= window.innerHeight;
-    const isLiveRegion = el.matches('[aria-live], [role="status"], [role="log"]');
-    const lines = (el.innerText || '').split('\n').map(normalizeText).filter(Boolean);
-
-    return rect.height <= 240 && lines.length <= 4 && (isLiveRegion || (isCentered && isBottomBand));
-  }
-
-  function collectCandidateRoots(mutations = []) {
-    const roots = new Set();
-
-    function addNode(node) {
-      let el = node instanceof Element ? node : node && node.parentElement;
-      let depth = 0;
-
-      while (el && depth < 5) {
-        if (isLikelyCaptionNode(el)) {
-          roots.add(el);
+        // Find the sibling/nearby text element
+        const parent = speakerEl.closest('div[jscontroller]') || speakerEl.parentElement;
+        let text = '';
+        for (const tSel of TEXT_SELECTORS) {
+          const textEls = parent ? parent.querySelectorAll(tSel) : [];
+          for (const te of textEls) {
+            text += te.textContent.trim() + ' ';
+          }
+          if (text.trim()) break;
         }
-        el = el.parentElement;
-        depth++;
+
+        if (text.trim() && !seen.has(speaker + text.trim())) {
+          seen.add(speaker + text.trim());
+          results.push({ speaker, text: text.trim() });
+        }
       }
     }
 
-    for (const selector of CAPTION_SELECTORS) {
-      document.querySelectorAll(selector).forEach((el) => addNode(el));
-    }
-
-    for (const mutation of mutations) {
-      addNode(mutation.target);
-      mutation.addedNodes.forEach((node) => addNode(node));
+    // Fallback: grab all text from the container as a single caption
+    if (results.length === 0) {
+      const fullText = container.innerText.trim();
+      if (fullText) {
+        // Try to split "Speaker Name\nCaption text" pattern
+        const lines = fullText.split('\n').filter(l => l.trim());
+        if (lines.length >= 2) {
+          // Heuristic: if first line is short (< 30 chars) it's likely the speaker name
+          const potentialSpeaker = lines[0].trim();
+          const potentialText = lines.slice(1).join(' ').trim();
+          if (potentialSpeaker.length < 30 && potentialText.length > 0) {
+            results.push({ speaker: potentialSpeaker, text: potentialText });
+          } else {
+            results.push({ speaker: 'Speaker', text: fullText });
+          }
+        } else if (lines.length === 1) {
+          results.push({ speaker: lastSpeaker || 'Speaker', text: lines[0].trim() });
+        }
+      }
     }
 
     return Array.from(roots);
   }
 
-  function collapseLines(lines) {
-    const result = [];
+  // ==================== OBSERVER ====================
 
-    for (const rawLine of lines) {
-      const line = normalizeText(rawLine);
-      if (!line) continue;
-      if (result[result.length - 1] === line) continue;
-      result.push(line);
-    }
+  /**
+   * Sets up a MutationObserver on the caption container to detect new/changed captions.
+   */
+  function attachObserver(container) {
+    if (observer) observer.disconnect();
 
-    return result;
-  }
-
-  function extractCaption(root) {
-    if (!root) return null;
-
-    const lines = collapseLines((root.innerText || '').split('\n'));
-    if (!lines.length) return null;
-
-    const combined = normalizeText(lines.join(' '));
-    if (!combined || isSystemAnnouncement(combined)) return null;
-
-    let speaker = 'Them';
-    let text = combined;
-
-    if (lines.length > 1 && lines[0].length <= 40) {
-      speaker = lines[0];
-      text = lines.slice(1).join(' ');
-    }
-
-    text = normalizeText(text);
-    if (!text || isSystemAnnouncement(`${speaker} ${text}`)) return null;
-
-    return { speaker, text };
-  }
-
-  function emitCaption(entry) {
-    if (!callback || !entry || !entry.text) return;
-
-    const now = Date.now();
-    const key = `${entry.speaker}|${entry.text}`.toLowerCase();
-    pruneRecentCaptions(now);
-
-    if (recentCaptions.has(key)) return;
-
-    recentCaptions.set(key, now);
-    callback(entry);
-  }
-
-  function scanCaptions(mutations = []) {
-    const roots = collectCandidateRoots(mutations);
-    for (const root of roots) {
-      emitCaption(extractCaption(root));
-    }
-  }
-
-  function startObserving(cb) {
-    callback = cb;
+    captionContainer = container;
 
     observer = new MutationObserver((mutations) => {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        scanCaptions(mutations);
-      }, 120);
+      if (!isActive || !captionCallback) return;
+
+      // Debounce: only process if there's actual new content
+      const currentText = container.innerText.trim();
+      if (currentText === lastCaptionText) return;
+      lastCaptionText = currentText;
+
+      const captions = extractCaptionData(container);
+      for (const cap of captions) {
+        if (cap.speaker) lastSpeaker = cap.speaker;
+        captionCallback({
+          speaker: cap.speaker,
+          text: cap.text,
+          partial: true, // Meet captions update in-place, treat as partial until they disappear
+        });
+      }
     });
 
-    observer.observe(document.body, {
+    observer.observe(container, {
       childList: true,
       subtree: true,
       characterData: true,
     });
 
-    scanCaptions();
+    console.log('[SignFlow CaptionScraper] Observer attached to caption container');
   }
 
-  function stopObserving() {
+  /**
+   * Polls for the caption container until it appears.
+   * Meet may not render captions until the user enables CC.
+   */
+  function startPolling() {
+    if (pollIntervalId) return;
+
+    pollIntervalId = setInterval(() => {
+      if (!isActive) {
+        clearInterval(pollIntervalId);
+        pollIntervalId = null;
+        return;
+      }
+
+      const container = findCaptionContainer();
+      if (container && container !== captionContainer) {
+        attachObserver(container);
+      } else if (!container && captionContainer) {
+        // Captions were turned off
+        captionContainer = null;
+        lastCaptionText = '';
+        if (observer) observer.disconnect();
+      }
+    }, 2000);
+  }
+
+  // ==================== ENABLE CAPTIONS HELPER ====================
+
+  /**
+   * Attempts to programmatically enable Google Meet's built-in captions
+   * by finding and clicking the CC button.
+   * Returns true if the button was found and clicked.
+   */
+  function tryEnableMeetCaptions() {
+    // Strategy 1: aria-label based (most reliable)
+    const buttons = document.querySelectorAll('button[aria-label]');
+    for (const btn of buttons) {
+      const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+      if (
+        label.includes('caption') ||
+        label.includes('subtitle') ||
+        label.includes('closed caption') ||
+        label.includes('cc')
+      ) {
+        // Check if captions are currently OFF (button not pressed)
+        const pressed = btn.getAttribute('aria-pressed');
+        if (pressed !== 'true') {
+          btn.click();
+          console.log('[SignFlow CaptionScraper] Auto-enabled Meet captions');
+          return true;
+        } else {
+          console.log('[SignFlow CaptionScraper] Meet captions already enabled');
+          return true;
+        }
+      }
+    }
+
+    // Strategy 2: data-tooltip based
+    const allButtons = document.querySelectorAll('button');
+    for (const btn of allButtons) {
+      const tooltip = (btn.getAttribute('data-tooltip') || '').toLowerCase();
+      if (tooltip.includes('caption') || tooltip.includes('subtitle')) {
+        btn.click();
+        console.log('[SignFlow CaptionScraper] Auto-enabled Meet captions via tooltip');
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if Meet captions appear to be currently active.
+   */
+  function areCaptionsActive() {
+    return captionContainer !== null && captionContainer.offsetHeight > 0;
+  }
+
+  // ==================== PUBLIC API ====================
+
+  /**
+   * Start scraping Meet captions.
+   * @param {Function} callback - Called with { speaker, text, partial } for each caption update.
+   * @param {Object} options - { autoEnable: boolean } whether to auto-click the CC button.
+   * @returns {{ active: boolean, captionsDetected: boolean }}
+   */
+  function start(callback, options = {}) {
+    if (isActive) return { active: true, captionsDetected: areCaptionsActive() };
+
+    captionCallback = callback;
+    isActive = true;
+    lastCaptionText = '';
+    lastSpeaker = '';
+
+    // Try to find the caption container immediately
+    const container = findCaptionContainer();
+    if (container) {
+      attachObserver(container);
+    } else if (options.autoEnable !== false) {
+      // Try to enable Meet captions
+      tryEnableMeetCaptions();
+    }
+
+    // Start polling for container (in case captions are enabled later)
+    startPolling();
+
+    return { active: true, captionsDetected: !!container };
+  }
+
+  /**
+   * Stop scraping.
+   */
+  function stop() {
+    isActive = false;
+
     if (observer) {
       observer.disconnect();
       observer = null;
     }
-    clearTimeout(debounceTimer);
-    callback = null;
-    recentCaptions.clear();
+
+    if (pollIntervalId) {
+      clearInterval(pollIntervalId);
+      pollIntervalId = null;
+    }
+
+    captionContainer = null;
+    captionCallback = null;
+    lastCaptionText = '';
+    lastSpeaker = '';
+
+    console.log('[SignFlow CaptionScraper] Stopped');
   }
 
-  // ==================== PUBLIC API ====================
-  window.__BridgeSignCaptionScraper = {
-    /**
-     * Start scraping Meet's native captions.
-     * @param {Function} cb - Called with { speaker: string, text: string } on each new caption
-     */
-    start(cb) {
-      stopObserving(); // Clean up any previous instance
-      startObserving(cb);
-    },
+  /**
+   * Returns whether the scraper is currently active.
+   */
+  function isRunning() {
+    return isActive;
+  }
 
-    /** Stop observing captions. */
-    stop() {
-      stopObserving();
-    },
-
-    /** Check if currently observing. */
-    isActive() {
-      return observer !== null;
-    }
-  };
+  return { start, stop, isRunning, areCaptionsActive, tryEnableMeetCaptions };
 })();
+
+// Export for content script
+if (typeof window !== 'undefined') {
+  window.MeetCaptionScraper = MeetCaptionScraper;
+}

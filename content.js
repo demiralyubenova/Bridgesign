@@ -374,6 +374,94 @@
     });
   }
 
+  // ==================== ONBOARDING TUTORIAL ====================
+  const ONBOARDING_SLIDES = [
+    {
+      icon: '🤟',
+      title: 'Welcome to BridgeSign',
+      body: 'BridgeSign bridges the gap between hearing speakers and ASL signers during Google Meet calls — no extensions needed on the other side.',
+    },
+    {
+      icon: '🗣️',
+      title: 'Speaker Role',
+      body: 'Choose this if you speak aloud. Your speech is converted to live subtitles burned directly into your camera feed so everyone can read what you say — even without the extension.',
+    },
+    {
+      icon: '🤲',
+      title: 'ASL Signer Role',
+      body: 'Choose this if you communicate through ASL. Your hand signs are recognized by the camera and converted to text subtitles. You will also see an ASL playback panel showing sign translations of what others say.',
+    },
+    {
+      icon: '⚙️',
+      title: 'Your Dashboard',
+      body: 'After choosing a role, a floating dashboard appears with a live transcript, settings for text size and color, and a download button to save the conversation. You can drag it anywhere on screen.',
+    },
+  ];
+
+  function showOnboarding(onComplete) {
+    const existing = document.getElementById('bridgesign-onboarding');
+    if (existing) existing.remove();
+
+    let currentSlide = 0;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'bridgesign-onboarding';
+    overlay.className = 'vt-role-selector-overlay';
+
+    function renderSlide() {
+      const slide = ONBOARDING_SLIDES[currentSlide];
+      const isLast = currentSlide === ONBOARDING_SLIDES.length - 1;
+      const isFirst = currentSlide === 0;
+
+      overlay.innerHTML = `
+        <div class="vt-onboarding-card">
+          <div class="vt-onboarding-icon">${slide.icon}</div>
+          <h2 class="vt-onboarding-title">${slide.title}</h2>
+          <p class="vt-onboarding-body">${slide.body}</p>
+          <div class="vt-onboarding-dots">
+            ${ONBOARDING_SLIDES.map((_, i) =>
+              `<span class="vt-onboarding-dot ${i === currentSlide ? 'active' : ''}"></span>`
+            ).join('')}
+          </div>
+          <div class="vt-onboarding-actions">
+            ${isFirst
+              ? `<button class="vt-onboarding-skip" id="ob-skip">Skip</button>`
+              : `<button class="vt-onboarding-back" id="ob-back">Back</button>`
+            }
+            <button class="vt-onboarding-next" id="ob-next">${isLast ? 'Get Started' : 'Next'}</button>
+          </div>
+        </div>
+      `;
+
+      overlay.querySelector('#ob-next').addEventListener('click', () => {
+        if (isLast) {
+          chrome.storage.local.set({ bridgesignOnboarded: true });
+          overlay.remove();
+          onComplete();
+        } else {
+          currentSlide++;
+          renderSlide();
+        }
+      });
+
+      if (isFirst) {
+        overlay.querySelector('#ob-skip').addEventListener('click', () => {
+          chrome.storage.local.set({ bridgesignOnboarded: true });
+          overlay.remove();
+          onComplete();
+        });
+      } else {
+        overlay.querySelector('#ob-back').addEventListener('click', () => {
+          currentSlide--;
+          renderSlide();
+        });
+      }
+    }
+
+    renderSlide();
+    document.body.appendChild(overlay);
+  }
+
   function showRoleSelector() {
     const existing = document.getElementById('bridgesign-role-selector');
     if (existing) existing.remove();
@@ -387,14 +475,12 @@
         <p class="vt-role-subtitle">Choose your communication mode:</p>
         <div class="vt-role-options">
           <button class="vt-role-btn" data-role="signer">
-                      <span class="vt-role-icon">🤟</span>
+            <span class="vt-role-icon">🤟</span>
             <span class="vt-role-label">ASL Signer</span>
           </button>
           <button class="vt-role-btn" data-role="speaker">
-
-                        <span class="vt-role-icon">🗣️</span>
+            <span class="vt-role-icon">🗣️</span>
             <span class="vt-role-label">Speaker</span>
-
           </button>
         </div>
       </div>
@@ -409,6 +495,16 @@
       };
     });
     document.body.appendChild(overlay);
+  }
+
+  function injectUI() {
+    chrome.storage.local.get('bridgesignOnboarded', (res) => {
+      if (res.bridgesignOnboarded) {
+        showRoleSelector();
+      } else {
+        showOnboarding(() => showRoleSelector());
+      }
+    });
   }
 
   async function startSession() {
@@ -772,7 +868,7 @@
 
     if (state.autoInjectDisabled) return;
 
-    if (document.getElementById('bridgesign-root') || document.getElementById('bridgesign-role-selector')) return;
+    if (document.getElementById('bridgesign-root') || document.getElementById('bridgesign-role-selector') || document.getElementById('bridgesign-onboarding')) return;
     if (document.querySelector('video')) injectUI();
   }
 

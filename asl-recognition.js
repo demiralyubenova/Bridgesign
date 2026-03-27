@@ -1,5 +1,5 @@
-// BridgeSign ASL Fingerspelling Recognition Module
-// Uses MediaPipe Hands for landmark detection + a classifier for ASL alphabet
+// BridgeSign ASL Recognition Module
+// Uses MediaPipe Hands for fingerspelling plus a small whole-word gesture layer.
 
 const ASLRecognition = (() => {
   'use strict';
@@ -10,6 +10,8 @@ const ASLRecognition = (() => {
     CAMERA_HEIGHT: 480,
     CONFIDENCE_THRESHOLD: 0.65,
     HOLD_FRAMES: 8,           // Frames to hold a letter before confirming
+    WORD_HOLD_FRAMES: 10,     // Static word gestures need a longer hold than letters
+    WORD_COOLDOWN_MS: 1600,   // Avoid retriggering the same full-word gesture immediately
     SPACE_TIMEOUT_MS: 1500,   // Pause duration to insert space
     PREDICTION_INTERVAL_MS: 100, // How often to run prediction
     MAX_TEXT_LENGTH: 40,          // Reset subtitle buffer after this many chars
@@ -39,15 +41,19 @@ const ASLRecognition = (() => {
   let letterCount = 0;
   let confirmedWord = '';
   let lastLetterTime = Date.now();
-  let fullText = '';
+  let committedText = '';
+  let currentWordGesture = null;
+  let wordGestureCount = 0;
+  let lastCommittedWordGesture = null;
+  let lastCommittedWordTime = 0;
 
   // ==================== HAND LANDMARK CLASSIFIER ====================
   // Simple rule-based ASL fingerspelling classifier using MediaPipe landmarks
   // This avoids needing a separate TF.js model for the MVP
   // Accuracy: ~70-85% for clear, front-facing fingerspelling
 
-  function classifyHandLandmarks(landmarks) {
-    if (!landmarks || landmarks.length < 21) return { letter: 'nothing', confidence: 0 };
+  function analyzeHandPose(landmarks) {
+    if (!landmarks || landmarks.length < 21) return null;
 
     const wrist = landmarks[0];
     const thumbTip = landmarks[4];
@@ -83,8 +89,75 @@ const ASLRecognition = (() => {
     const ringCurled = isCurled(ringTip, ringMCP);
     const pinkyCurled = isCurled(pinkyTip, pinkyMCP);
 
-    const isHandPointingDown = indexTip.y > wrist.y && middleTip.y > wrist.y;
-    const thumbToIndexDist = dist(thumbTip, indexTip);
+    return {
+      wrist,
+      thumbTip,
+      thumbIP,
+      indexTip,
+      indexDIP,
+      indexPIP,
+      indexMCP,
+      middleTip,
+      middlePIP,
+      middleMCP,
+      ringTip,
+      ringPIP,
+      ringMCP,
+      pinkyTip,
+      pinkyPIP,
+      pinkyMCP,
+      indexExtended,
+      middleExtended,
+      ringExtended,
+      pinkyExtended,
+      thumbExtended,
+      indexCurled,
+      middleCurled,
+      ringCurled,
+      pinkyCurled,
+      isHandPointingDown: indexTip.y > wrist.y && middleTip.y > wrist.y,
+      thumbToIndexDist: dist(thumbTip, indexTip),
+      palmWidth: dist(indexMCP, pinkyMCP),
+      fingertipSpread: dist(indexTip, pinkyTip),
+      fingerFan: dist(indexTip, middleTip) + dist(middleTip, ringTip) + dist(ringTip, pinkyTip),
+      dist,
+      isPointingForward,
+      isPointingDown,
+    };
+  }
+
+  function classifyHandLandmarks(landmarks) {
+    const pose = analyzeHandPose(landmarks);
+    if (!pose) return { letter: 'nothing', confidence: 0 };
+
+    const {
+      thumbTip,
+      indexTip,
+      indexDIP,
+      indexPIP,
+      indexMCP,
+      middleTip,
+      middlePIP,
+      middleMCP,
+      ringTip,
+      ringPIP,
+      ringMCP,
+      pinkyTip,
+      pinkyPIP,
+      pinkyMCP,
+      indexExtended,
+      middleExtended,
+      ringExtended,
+      pinkyExtended,
+      thumbExtended,
+      indexCurled,
+      middleCurled,
+      isHandPointingDown,
+      thumbToIndexDist,
+      dist,
+      isPointingForward,
+      isPointingDown,
+    } = pose;
 
     // 1. F: OK sign but three fingers up
     if (thumbToIndexDist < 0.04 && middleExtended && ringExtended && pinkyExtended) return { letter: 'F', confidence: 0.78 };
@@ -145,6 +218,49 @@ const ASLRecognition = (() => {
     return { letter: 'nothing', confidence: 0.3 };
   }
 
+  function classifyWordGesture(landmarks) {
+    const pose = analyzeHandPose(landmarks);
+    if (!pose) return { word: null, confidence: 0 };
+
+    const {
+      wrist,
+      indexMCP,
+      indexExtended,
+      middleExtended,
+      ringExtended,
+      pinkyExtended,
+      thumbExtended,
+      thumbToIndexDist,
+      fingertipSpread,
+      palmWidth,
+      fingerFan,
+    } = pose;
+
+    const allFingersExtended = indexExtended && middleExtended && ringExtended && pinkyExtended;
+    const isStopPalm = allFingersExtended
+      && thumbExtended
+      && thumbToIndexDist > 0.09
+      && fingertipSpread > palmWidth * 1.35
+      && fingerFan > 0.16
+      && wrist.y > indexMCP.y;
+
+    if (isStopPalm) {
+      return { word: 'STOP', confidence: 0.9 };
+    }
+
+    const isILY = indexExtended
+      && !middleExtended
+      && !ringExtended
+      && pinkyExtended
+      && thumbExtended;
+
+    if (isILY) {
+      return { word: 'I LOVE YOU', confidence: 0.95 };
+    }
+
+    return { word: null, confidence: 0 };
+  }
+
   // ==================== WEBCAM ====================
   async function initializeCamera() {
     try {
@@ -202,38 +318,54 @@ const ASLRecognition = (() => {
   function onHandResults(results) {
     if (!isActive) return;
 
-    let detectedLetter = null;
+    let detectedToken = null;
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
       const landmarks = results.multiHandLandmarks[0];
       
-      let handWasClassified = false;
+      let handWasHandled = false;
 
-      // Check motion gestures first
+      // Check dynamic gestures first because they rely on movement across frames.
       if (window.MotionTracker) {
         const motionMatch = window.MotionTracker.track(landmarks);
-        if (motionMatch.letter && motionMatch.confidence >= CONFIG.CONFIDENCE_THRESHOLD) {
-          detectedLetter = motionMatch.letter;
-          processLetter(motionMatch.letter);
-          handWasClassified = true;
+        if (motionMatch.token && motionMatch.confidence >= CONFIG.CONFIDENCE_THRESHOLD) {
+          detectedToken = motionMatch.token;
+          if (motionMatch.kind === 'word') {
+            processWordGesture(motionMatch.token, true);
+          } else {
+            processLetter(motionMatch.token);
+          }
+          handWasHandled = true;
         }
       }
 
-      if (!handWasClassified) {
+      if (!handWasHandled) {
+        const wordGesture = classifyWordGesture(landmarks);
+        if (wordGesture.word && wordGesture.confidence >= CONFIG.CONFIDENCE_THRESHOLD) {
+          detectedToken = wordGesture.word;
+          processWordGesture(wordGesture.word, false);
+          handWasHandled = true;
+        }
+      }
+
+      if (!handWasHandled) {
         const classification = classifyHandLandmarks(landmarks);
         if (classification.confidence >= CONFIG.CONFIDENCE_THRESHOLD) {
-          detectedLetter = classification.letter;
+          detectedToken = classification.letter;
           processLetter(classification.letter);
+        } else {
+          processLetter('nothing');
         }
       }
 
-      drawLandmarksOnCanvas(landmarks, detectedLetter);
+      drawLandmarksOnCanvas(landmarks, detectedToken);
     } else {
+      processLetter('nothing');
       drawLandmarksOnCanvas(null, null);
     }
   }
 
-  function drawLandmarksOnCanvas(landmarks, detectedLetter) {
+  function drawLandmarksOnCanvas(landmarks, detectedToken) {
     const canvas = document.getElementById('sf-pip-canvas');
     const label = document.getElementById('sf-pip-label');
     const container = document.getElementById('sf-pip-container');
@@ -257,7 +389,7 @@ const ASLRecognition = (() => {
     }
 
     if (label) {
-      label.textContent = (detectedLetter && detectedLetter !== 'nothing') ? detectedLetter : '-';
+      label.textContent = (detectedToken && detectedToken !== 'nothing') ? detectedToken : '-';
     }
 
     if (!landmarks || landmarks.length === 0) return;
@@ -296,16 +428,82 @@ const ASLRecognition = (() => {
     ctx.restore();
   }
 
+  function resetWordGestureState() {
+    currentWordGesture = null;
+    wordGestureCount = 0;
+  }
+
+  function appendCommittedToken(token) {
+    if (!token) return;
+    committedText = committedText ? `${committedText} ${token}` : token;
+  }
+
+  function buildCurrentText() {
+    if (committedText && confirmedWord) {
+      return `${committedText} ${confirmedWord}`;
+    }
+    return committedText || confirmedWord;
+  }
+
+  function commitSpelledWord() {
+    if (!confirmedWord) return false;
+    appendCommittedToken(confirmedWord);
+    confirmedWord = '';
+    return true;
+  }
+
+  function commitRecognizedWord(word) {
+    commitSpelledWord();
+    appendCommittedToken(word);
+    lastCommittedWordGesture = word;
+    lastCommittedWordTime = Date.now();
+    resetWordGestureState();
+    currentLetter = null;
+    letterCount = 0;
+    checkAndReset(false);
+  }
+
+  function processWordGesture(word, immediate) {
+    if (!word) {
+      resetWordGestureState();
+      return;
+    }
+
+    const now = Date.now();
+    if (
+      word === lastCommittedWordGesture
+      && now - lastCommittedWordTime < CONFIG.WORD_COOLDOWN_MS
+    ) {
+      return;
+    }
+
+    if (immediate) {
+      commitRecognizedWord(word);
+      return;
+    }
+
+    if (word === currentWordGesture) {
+      wordGestureCount++;
+      if (wordGestureCount >= CONFIG.WORD_HOLD_FRAMES) {
+        commitRecognizedWord(word);
+      }
+      return;
+    }
+
+    currentWordGesture = word;
+    wordGestureCount = 1;
+  }
+
   function processLetter(letter) {
+    resetWordGestureState();
+
     if (letter === 'nothing' || letter === 'del' || letter === 'space') {
-      if (letter === 'space' && confirmedWord.length > 0) {
-        fullText += confirmedWord + ' ';
-        confirmedWord = '';
+      if (letter === 'space' && commitSpelledWord()) {
         checkAndReset(false);
       }
       if (letter === 'del' && confirmedWord.length > 0) {
         confirmedWord = confirmedWord.slice(0, -1);
-        emitCaption(fullText + confirmedWord, true);
+        emitCaption(buildCurrentText(), true);
       }
       currentLetter = null;
       letterCount = 0;
@@ -316,8 +514,7 @@ const ASLRecognition = (() => {
 
     // Auto-space after timeout
     if (now - lastLetterTime > CONFIG.SPACE_TIMEOUT_MS && confirmedWord.length > 0) {
-      fullText += confirmedWord + ' ';
-      confirmedWord = '';
+      commitSpelledWord();
       checkAndReset(false);
     }
 
@@ -337,11 +534,11 @@ const ASLRecognition = (() => {
 
   // Check if text is too long and reset if needed
   function checkAndReset(partial) {
-    const total = fullText + confirmedWord;
+    const total = buildCurrentText();
     if (total.length >= CONFIG.MAX_TEXT_LENGTH) {
       // Emit full text as final, then wipe everything
       emitCaption(total.trim(), false);
-      fullText = '';
+      committedText = '';
       confirmedWord = '';
     } else {
       emitCaption(total, partial);
@@ -393,7 +590,11 @@ const ASLRecognition = (() => {
     currentLetter = null;
     letterCount = 0;
     confirmedWord = '';
-    fullText = '';
+    committedText = '';
+    currentWordGesture = null;
+    wordGestureCount = 0;
+    lastCommittedWordGesture = null;
+    lastCommittedWordTime = 0;
     lastLetterTime = Date.now();
     ownsVideoElement = false;
 

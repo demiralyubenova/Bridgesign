@@ -489,6 +489,7 @@
       state.toolbar.setListening(true);
       const result = await window.ASLRecognition.start((text, partial) => {
         state.toolbar.addTranscript({ speaker: 'You', text, partial });
+        document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text } }));
         port.postMessage({ type: 'CAPTION', data: { source: 'sign', text, partial } });
       });
 

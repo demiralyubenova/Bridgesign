@@ -321,12 +321,13 @@
         <p class="vt-role-subtitle">Choose your communication mode:</p>
         <div class="vt-role-options">
           <button class="vt-role-btn" data-role="signer">
-            <span class="vt-role-icon">🤟</span>
-            <span class="vt-role-label">ASL Signer</span>
-          </button>
-          <button class="vt-role-btn" data-role="speaker">
             <span class="vt-role-icon">🗣️</span>
             <span class="vt-role-label">Speaker</span>
+          </button>
+          <button class="vt-role-btn" data-role="speaker">
+                      <span class="vt-role-icon">🤟</span>
+            <span class="vt-role-label">ASL Signer</span>
+
           </button>
         </div>
       </div>

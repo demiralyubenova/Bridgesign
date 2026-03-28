@@ -115,12 +115,8 @@ const SignPlayer = (() => {
 
     setVisible(true);
 
-    if (manifest.priority === 'urgent') {
-      playManifest(manifest, true);
-      return;
-    }
-
-    playManifest(manifest, false);
+    // Always interrupt current playback — latest speech takes priority
+    playManifest(manifest, true);
   }
 
   function replayLast() {

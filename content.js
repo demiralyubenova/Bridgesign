@@ -1350,6 +1350,16 @@
     return /\/[a-z]{3}-[a-z]{4}-[a-z]{3}/.test(window.location.pathname);
   }
 
+  function isInMeetLobby() {
+    // Google Meet lobby has a "Join now" or "Ask to join" button
+    const buttons = document.querySelectorAll('button');
+    for (const btn of buttons) {
+      const text = (btn.textContent || '').trim().toLowerCase();
+      if (text === 'join now' || text === 'ask to join') return true;
+    }
+    return false;
+  }
+
   // Init logic
   function check() {
     if (!isMeetRoomPage()) {
@@ -1359,6 +1369,9 @@
     }
 
     if (state.autoInjectDisabled) return;
+
+    // Don't activate on the pre-join lobby — wait until actually in the call
+    if (isInMeetLobby()) return;
 
     if (document.getElementById('bridgesign-root') || document.getElementById('bridgesign-role-selector') || document.getElementById('bridgesign-onboarding')) return;
     if (document.querySelector('video')) injectUI();

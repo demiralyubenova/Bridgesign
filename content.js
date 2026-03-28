@@ -203,7 +203,7 @@
         <div class="vt-section">
           <label class="vt-section-label">TOOLBAR</label>
           <div class="vt-toolbar vt-panel" id="sf-toolbar">
-            <div class="vt-avatar" id="sf-drag-handle">SF</div>
+            <div class="vt-avatar" id="sf-drag-handle"><img src="${typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getURL('assets/bridgesign-logo.png') : ''}" alt="BS" style="width:100%;height:100%;object-fit:cover;border-radius:50%;"></div>
 
             <div class="vt-session-pill">
               <div class="vt-dot ${state.connected ? 'vt-dot--live' : 'vt-dot--idle'}"></div>
@@ -283,24 +283,6 @@
             </div>
           </div>
         </div>
-
-        <div class="vt-section" id="sf-sign-section" style="display:${state.role === 'signer' ? '' : 'none'}">
-          <div class="sf-sign-section-header">
-            <label class="vt-section-label">ASL Playback</label>
-            <button class="sf-sign-replay" id="sf-replay-sign" type="button">Replay</button>
-          </div>
-          <div class="sf-sign-panel vt-panel">
-            <div class="sf-sign-stage">
-              <video class="sf-sign-video" id="sf-sign-video" playsinline muted></video>
-              <div class="sf-sign-fallback-card" id="sf-sign-fallback-card" style="display:none;"></div>
-            </div>
-            <div class="sf-sign-meta">
-              <div class="sf-sign-status" id="sf-sign-status">Waiting for ASL plan</div>
-              <div class="sf-sign-current" id="sf-sign-current">-</div>
-            </div>
-            <div class="sf-sign-unit-list" id="sf-sign-unit-list"></div>
-          </div>
-        </div>
       `;
 
       this._bindEvents();
@@ -356,11 +338,7 @@
         updateSettings({ opacity: e.target.value });
       });
 
-      this.container.querySelector('#sf-replay-sign').addEventListener('click', () => {
-        if (window.SignPlayer) {
-          window.SignPlayer.replayLast();
-        }
-      });
+
     }
 
     _startListeningAnimation() {

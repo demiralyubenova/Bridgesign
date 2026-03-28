@@ -53,9 +53,23 @@ const MeetCaptionScraper = (() => {
     /\bpresenting\b/,
     /\bcaption(s)? turned (on|off)\b/,
     /\bsubtitle(s)? turned (on|off)\b/,
+    /\bis in this call\b/,
+    /\bis in the call\b/,
+    /\bjoined the call\b/,
+    /\bleft the call\b/,
+    /\bjump to bottom\b/i,
+    /\barrow_downward\b/,
+    /\barrow_upward\b/,
+    /\bmore_vert\b/,
+    /\bclose\b.*\bbutton\b/i,
+    /\bturn (on|off) (mic|camera|captions)\b/i,
+    /\byour mic is (off|on|muted)\b/i,
+    /\bclick the mic\b/i,
+    /\bare you talking\b/i,
     /участва в обаждането/i,
     /напусна обаждането/i,
     /се присъедини/i,
+    /в обаждането/i,
   ];
 
   const BRIDGESIGN_UI_SELECTORS = [
@@ -124,8 +138,33 @@ const MeetCaptionScraper = (() => {
       normalizedText.includes('toolbar') ||
       normalizedText.includes('transcript') ||
       normalizedText.includes('asl playback') ||
-      normalizedText.includes('asl preview')
+      normalizedText.includes('asl preview') ||
+      normalizedText.includes('no one else is in this meeting') ||
+      normalizedText.includes('meeting link') ||
+      normalizedText.includes('copy link') ||
+      normalizedText.includes('content_copy') ||
+      normalizedText.includes('add others') ||
+      normalizedText.includes('your meeting') ||
+      normalizedText.includes('permission before') ||
+      normalizedText.includes('joined as') ||
+      normalizedText.includes('font size') ||
+      normalizedText.includes('font color') ||
+      normalizedText.includes('caption settings') ||
+      normalizedText.includes('open caption') ||
+      normalizedText.includes('meet.google.com') ||
+      normalizedText.includes('@gmail.com') ||
+      normalizedText.includes('waiting for asl')
     ) {
+      return true;
+    }
+
+    // Real captions are short — reject anything over 120 chars
+    if (normalizedText.length > 120) {
+      return true;
+    }
+
+    // Reject text containing Material Icons ligature names
+    if (/\b(arrow_downward|arrow_upward|more_vert|content_copy|check_circle|close|keyboard_arrow)\b/.test(normalizedText)) {
       return true;
     }
 

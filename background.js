@@ -1,20 +1,17 @@
 // BridgeSign Background Service Worker
 // Manages per-tab relay sessions, sign-planning requests, and the offscreen ASL pipeline.
 
-const DEFAULT_RELAY_URL = 'ws://192.168.1.6:3001';
+const DEFAULT_RELAY_URL = 'ws://localhost:3001';
 const DEFAULT_PLANNER_URL = 'http://localhost:8001';
 
 let RELAY_SERVER_URL = DEFAULT_RELAY_URL;
 let SIGN_PLAN_SERVER_URL = DEFAULT_PLANNER_URL;
 
 const LEGACY_RELAY_URLS = new Set([
-  'ws://localhost:3001',
-  'ws://127.0.0.1:3001',
   'ws://172.20.10.8:3001',
+  'ws://192.168.1.6:3001',
 ]);
 const LEGACY_PLANNER_URLS = new Set([
-  'http://localhost:8001',
-  'http://127.0.0.1:8001',
   'http://172.20.10.8:8001',
 ]);
 

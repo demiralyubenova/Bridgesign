@@ -224,19 +224,38 @@ const ASLRecognition = (() => {
 
     const {
       wrist,
+      thumbTip,
+      thumbIP,
+      indexTip,
       indexMCP,
+      indexPIP,
+      middleTip,
+      middleMCP,
+      ringTip,
+      ringMCP,
+      pinkyTip,
+      pinkyMCP,
       indexExtended,
       middleExtended,
       ringExtended,
       pinkyExtended,
       thumbExtended,
+      indexCurled,
+      middleCurled,
+      ringCurled,
+      pinkyCurled,
       thumbToIndexDist,
       fingertipSpread,
       palmWidth,
       fingerFan,
+      dist,
     } = pose;
 
     const allFingersExtended = indexExtended && middleExtended && ringExtended && pinkyExtended;
+    const allFingersCurled = indexCurled && middleCurled && ringCurled && pinkyCurled;
+    const noFingerExtended = !indexExtended && !middleExtended && !ringExtended && !pinkyExtended;
+
+    // -------- STOP: Open palm, fingers spread, hand raised --------
     const isStopPalm = allFingersExtended
       && thumbExtended
       && thumbToIndexDist > 0.09
@@ -248,6 +267,7 @@ const ASLRecognition = (() => {
       return { word: 'STOP', confidence: 0.9 };
     }
 
+    // -------- I LOVE YOU: Index + pinky + thumb extended, middle + ring curled --------
     const isILY = indexExtended
       && !middleExtended
       && !ringExtended
@@ -256,6 +276,72 @@ const ASLRecognition = (() => {
 
     if (isILY) {
       return { word: 'I LOVE YOU', confidence: 0.95 };
+    }
+
+    // -------- THUMBS UP: Fist with thumb pointing up --------
+    if (noFingerExtended && thumbExtended && thumbTip.y < wrist.y - 0.08 && thumbTip.y < indexMCP.y) {
+      return { word: 'GOOD', confidence: 0.88 };
+    }
+
+    // -------- THUMBS DOWN: Fist with thumb pointing down --------
+    if (noFingerExtended && thumbExtended && thumbTip.y > wrist.y + 0.05 && thumbTip.y > indexMCP.y + 0.03) {
+      return { word: 'BAD', confidence: 0.85 };
+    }
+
+    // -------- OK / OKAY: Thumb + index form circle, other 3 fingers extended --------
+    if (thumbToIndexDist < 0.04 && middleExtended && ringExtended && pinkyExtended) {
+      return { word: 'OKAY', confidence: 0.88 };
+    }
+
+    // -------- PEACE / V sign: Index + middle spread, others curled --------
+    if (indexExtended && middleExtended && !ringExtended && !pinkyExtended
+        && !thumbExtended && dist(indexTip, middleTip) > 0.05) {
+      return { word: 'PEACE', confidence: 0.85 };
+    }
+
+    // -------- CALL ME: Thumb + pinky extended, others curled (phone shape) --------
+    if (!indexExtended && !middleExtended && !ringExtended
+        && pinkyExtended && thumbExtended
+        && dist(thumbTip, pinkyTip) > 0.12) {
+      // Distinguish from ILY: ILY has index extended too
+      return { word: 'CALL ME', confidence: 0.82 };
+    }
+
+    // -------- ROCK ON / HORNS: Index + pinky extended, middle + ring curled, thumb curled --------
+    if (indexExtended && !middleExtended && !ringExtended && pinkyExtended && !thumbExtended) {
+      return { word: 'ROCK ON', confidence: 0.82 };
+    }
+
+    // -------- HELLO: Open palm, all fingers together (not spread), hand raised --------
+    if (allFingersExtended && !thumbExtended
+        && fingertipSpread < palmWidth * 1.3
+        && wrist.y > indexMCP.y) {
+      return { word: 'HELLO', confidence: 0.80 };
+    }
+
+    // -------- WAIT: Open palm facing down (all fingers extended, hand flat) --------
+    if (allFingersExtended && thumbExtended
+        && wrist.y < indexMCP.y
+        && fingertipSpread < palmWidth * 1.3) {
+      return { word: 'WAIT', confidence: 0.78 };
+    }
+
+    // -------- ONE / POINT: Only index finger up --------
+    if (indexExtended && !middleExtended && !ringExtended && !pinkyExtended && !thumbExtended
+        && indexTip.y < indexMCP.y - 0.06) {
+      return { word: 'ONE', confidence: 0.80 };
+    }
+
+    // -------- THREE: Index + middle + ring extended, pinky curled --------
+    if (indexExtended && middleExtended && ringExtended && !pinkyExtended && thumbExtended) {
+      return { word: 'THREE', confidence: 0.75 };
+    }
+
+    // -------- FIVE / ALL: All fingers and thumb fully spread wide --------
+    if (allFingersExtended && thumbExtended
+        && fingertipSpread > palmWidth * 1.6
+        && fingerFan > 0.2) {
+      return { word: 'FIVE', confidence: 0.78 };
     }
 
     return { word: null, confidence: 0 };

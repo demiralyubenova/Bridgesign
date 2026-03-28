@@ -167,7 +167,7 @@
         // Remove existing partial of same speaker if exists
         state.transcripts = state.transcripts.filter(t => !(t.speaker === speaker && t.partial));
         state.transcripts.push({ speaker, text, partial: false });
-        
+
         // Store for download
         const now = new Date();
         const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
@@ -191,7 +191,7 @@
       this.sessionId = id || '...';
       const pill = this.container.querySelector('.vt-session-label');
       if (pill) pill.textContent = this.sessionId.toLowerCase();
-      
+
       const dot = this.container.querySelector('.vt-dot');
       if (dot) {
         dot.className = `vt-dot ${state.connected ? 'vt-dot--live' : 'vt-dot--idle'}`;
@@ -456,15 +456,13 @@
         break;
       case 'REMOTE_CAPTION':
         contentLog('Applying remote caption to transcript', msg.data);
-        if (state.toolbar) state.toolbar.addTranscript({ 
-          speaker: msg.data.source === 'speech' ? 'Voice' : 'Sign', 
+        if (state.toolbar) state.toolbar.addTranscript({
+          speaker: msg.data.source === 'speech' ? 'Voice' : 'Sign',
           text: msg.data.text,
-          partial: msg.data.partial 
+          partial: msg.data.partial
         });
         if (state.role === 'signer' && msg.data.source === 'speech' && msg.data.partial === false) {
           markSignerSpeechSourceReady('relay');
-          contentLog('Remote final speech caption will trigger local planner fetch', { text: msg.data.text });
-          requestLocalSignPlan(msg.data.text);
         }
         break;
       case 'REMOTE_SIGN_PLAN':
@@ -537,10 +535,23 @@
     return true;
   }
 
+  const PLANNER_BLOCKLIST = [
+    'is in this call', 'is in the call', 'joined the call', 'left the call',
+    'arrow_downward', 'arrow_upward', 'more_vert', 'content_copy',
+    'jump to bottom', 'meeting link', 'copy link', 'add others',
+    'your meeting', 'joined as', 'font size', 'font color',
+    'caption settings', 'open caption', 'meet.google.com',
+    'no one else', 'waiting for asl', 'are you talking',
+    'your mic is', 'click the mic', 'turn on mic', 'turn off mic',
+    'keyboard_arrow', 'check_circle', 'live captions have been turned off'
+  ];
+
   function sanitizePlannerText(text) {
     const sanitized = String(text || '').replace(/\s+/g, ' ').trim();
     if (!sanitized) return '';
     if (!/[A-Za-z0-9]/.test(sanitized)) return '';
+    const lower = sanitized.toLowerCase();
+    if (PLANNER_BLOCKLIST.some((phrase) => lower.includes(phrase))) return '';
     return sanitized.slice(0, 240).trim();
   }
 
@@ -693,6 +704,11 @@
       contentLog('Stopping signer microphone fallback because a better speech source is active', { source });
       stopSignerSpeechRecognitionFallback();
     }
+    // When relay data arrives, stop the Meet caption scraper too to avoid duplicates
+    if (source === 'relay' && window.MeetCaptionScraper && typeof window.MeetCaptionScraper.stop === 'function') {
+      contentLog('Stopping Meet caption scraper because relay is delivering captions');
+      window.MeetCaptionScraper.stop();
+    }
   }
 
   function scheduleSignerSpeechFallback() {
@@ -750,29 +766,38 @@
     const startResult = window.MeetCaptionScraper.start((cap) => {
       if (!cap || !cap.text) return;
       contentLog('Meet caption observed', cap);
-      if (state.role === 'speaker' && isLikelyOwnMeetCaption(cap.text)) return;
-      if (state.role === 'signer') {
-        markSignerSpeechSourceReady('meet-captions');
+
+      // Speaker side: skip own captions in transcript display only
+      // (Speech recognition handles relaying to signer, not the scraper)
+      if (state.role === 'speaker') {
+        if (isLikelyOwnMeetCaption(cap.text)) return;
+        const lower = (cap.text || '').toLowerCase();
+        if (PLANNER_BLOCKLIST.some((phrase) => lower.includes(phrase))) return;
+
+        // Show other people's speech in the speaker's local transcript
+        if (state.toolbar) {
+          state.toolbar.addTranscript({
+            speaker: cap.speaker || 'Them',
+            text: cap.text,
+            partial: false,
+          });
+        }
+        return;
       }
 
+      // Signer side: relay is the canonical source, so don't add scraper results to transcript
+      // Just mark that a speech source exists (to stop mic fallback)
+      if (state.role === 'signer') {
+        markSignerSpeechSourceReady('meet-captions');
+        return;
+      }
+
+      // Other roles: show in transcript
       if (state.toolbar) {
         state.toolbar.addTranscript({
           speaker: cap.speaker || 'Them',
           text: cap.text,
           partial: false,
-        });
-      }
-
-      if (
-        state.role === 'signer' &&
-        !isLikelyOwnMeetCaption(cap.text) &&
-        shouldRequestMeetSpeechPlan(cap.text)
-      ) {
-        contentLog('Meet caption will trigger planner request and background caption', { text: cap.text });
-        requestLocalSignPlan(cap.text);
-        sendPortMessage({
-          type: 'CAPTION',
-          data: { source: 'meet-caption', text: cap.text, partial: false },
         });
       }
     });
@@ -828,14 +853,14 @@
           <p class="vt-onboarding-body">${slide.body}</p>
           <div class="vt-onboarding-dots">
             ${ONBOARDING_SLIDES.map((_, i) =>
-              `<span class="vt-onboarding-dot ${i === currentSlide ? 'active' : ''}"></span>`
-            ).join('')}
+        `<span class="vt-onboarding-dot ${i === currentSlide ? 'active' : ''}"></span>`
+      ).join('')}
           </div>
           <div class="vt-onboarding-actions">
             ${isFirst
-              ? `<button class="vt-onboarding-skip" id="ob-skip">Skip</button>`
-              : `<button class="vt-onboarding-back" id="ob-back">Back</button>`
-            }
+          ? `<button class="vt-onboarding-skip" id="ob-skip">Skip</button>`
+          : `<button class="vt-onboarding-back" id="ob-back">Back</button>`
+        }
             <button class="vt-onboarding-next" id="ob-next">${isLast ? 'Get Started' : 'Next'}</button>
           </div>
         </div>
@@ -1133,7 +1158,7 @@
 
   // ==================== RECOGNITION (STUBS) ====================
   // [Keeping existing speech recognition and ASL logic but calling state.toolbar.addTranscript]
-  
+
   let speechRec = null;
   const SPEECH_RECOGNITION_LANG = 'en-US';
   function startSpeechRecognition(auto = false) {
@@ -1165,7 +1190,7 @@
           state.toolbar.addTranscript({ speaker: 'You', text: interim, partial: true });
         }
         document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text: interim } }));
-        sendPortMessage({ type: 'CAPTION', data: { source: 'speech', text: interim, partial: true } });
+        // Don't relay interim results — only final speech goes to the signer
       }
     };
     speechRec.onstart = () => {
@@ -1222,20 +1247,15 @@
       }
       if (final) {
         contentLog('Signer speech recognition final transcript', { text: final });
-        if (state.toolbar) {
-          state.toolbar.addTranscript({ speaker: 'Speaker', text: final, partial: false });
-        }
+        // Don't add to transcript — relay ('Voice') is the canonical source
         document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text: final } }));
-        requestLocalSignPlan(final);
 
         const now = new Date();
         const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
         state.fullTranscript.push({ timestamp: timeStr, speaker: 'Speaker', text: final });
       } else if (interim) {
         contentLog('Signer speech recognition interim transcript', { text: interim });
-        if (state.toolbar) {
-          state.toolbar.addTranscript({ speaker: 'Speaker', text: interim, partial: true });
-        }
+        // Don't add to transcript — relay ('Voice') is the canonical source
         document.dispatchEvent(new CustomEvent('bridgesign-vcam-caption', { detail: { text: interim } }));
       }
     };
@@ -1243,7 +1263,7 @@
     signerSpeechRec.onend = () => {
       // Auto-restart if still in signer role
       if (state.role === 'signer' && signerSpeechRec) {
-        try { signerSpeechRec.start(); } catch (_) {}
+        try { signerSpeechRec.start(); } catch (_) { }
       }
     };
 
